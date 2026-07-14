@@ -624,8 +624,14 @@ st.markdown("""
     .stApp {
         background: radial-gradient(circle at 10% 20%, rgb(18, 25, 41) 0%, rgb(10, 12, 18) 90%);
     }
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label {
-        color: #f0f3f9 !important;
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgb(15, 23, 42) 0%, rgb(10, 12, 18) 100%) !important;
+    }
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label, .stApp span, .stApp div {
+        color: #f0f3f9;
+    }
+    .stApp textarea, .stApp input, .stApp select {
+        color: #0f172a !important;
     }
     h1 {
         background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);

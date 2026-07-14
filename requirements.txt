@@ -11,3 +11,5 @@ cryptography>=3.1
 numpy
 sentence-transformers
 langchain-huggingface
+faiss-cpu
+boto3

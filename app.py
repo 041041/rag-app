@@ -1,17 +1,28 @@
-# app.py - CLEANED & CONSOLIDATED
+# app.py - Refactored for Cloudflare R2 and FAISS Integration
 import os
 import asyncio
-from pathlib import Path
-from typing import List 
-import pickle
-from math import sqrt
 import time
-from datetime import datetime
+import json
+import logging
 import hashlib
-import traceback
+import pickle
+from datetime import datetime
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 import numpy as np
 import streamlit as st
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("RAGApp.Main")
+
+# Import modular components
+from config import settings
+from storage import r2_storage
+from rag.faiss_store import FAISSVectorStore
+from rag.retrieval import VectorStoreRetrieverAdapter
+from rag.indexing import process_and_index_file, get_document_metadata, save_document_metadata
 
 # Ensure an asyncio event loop exists for the current thread (Streamlit-related fix)
 def ensure_event_loop():
@@ -23,10 +34,7 @@ def ensure_event_loop():
 
 ensure_event_loop()
 
-# -------------------------
-# LangChain loaders and helpers (robust across versions)
-# -------------------------
-# Document fallback imports
+# --- LangChain imports and fallbacks ---
 try:
     from langchain_core.documents import Document
 except Exception:
@@ -41,40 +49,19 @@ except Exception:
                     self.page_content = page_content
                     self.metadata = metadata or {}
 
-# Text splitters
+# PromptTemplate import
 try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain.prompts import PromptTemplate
 except Exception:
     try:
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        from langchain.prompt import PromptTemplate
     except Exception:
-        RecursiveCharacterTextSplitter = None
+        class PromptTemplate:
+            def __init__(self, input_variables=None, template=""):
+                self.input_variables = input_variables or []
+                self.template = template
 
-# Document loaders
-_loaded_loaders = False
-try:
-    from langchain_community.document_loaders import (
-        PyPDFLoader,
-        TextLoader,
-        CSVLoader,
-        Docx2txtLoader,
-        UnstructuredHTMLLoader,
-    )
-    _loaded_loaders = True
-except Exception:
-    try:
-        from langchain.document_loaders import (
-            PyPDFLoader,
-            TextLoader,
-            CSVLoader,
-            Docx2txtLoader,
-            UnstructuredHTMLLoader,
-        )
-        _loaded_loaders = True
-    except Exception:
-        PyPDFLoader = TextLoader = CSVLoader = Docx2txtLoader = UnstructuredHTMLLoader = None
-
-# RetrievalQA import (multiple possible locations)
+# RetrievalQA import
 RetrievalQA = None
 try:
     from langchain.chains.retrieval_qa.base import RetrievalQA
@@ -87,63 +74,11 @@ except Exception:
         except Exception:
             RetrievalQA = None
 
-# PromptTemplate import (try a few locations)
-try:
-    from langchain.prompts import PromptTemplate
-except Exception:
-    try:
-        from langchain.prompt import PromptTemplate
-    except Exception:
-        class PromptTemplate:
-            def __init__(self, input_variables=None, template=""):
-                self.input_variables = input_variables or []
-                self.template = template
-
-# BaseRetriever type (adapter uses it)
-try:
-    from langchain.schema import BaseRetriever
-except Exception:
-    try:
-        from langchain_core.schema import BaseRetriever
-    except Exception:
-        BaseRetriever = object
-
-# Google Gemini integration (langchain-google-genai package)
+# Google Gemini integration
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
 except Exception:
     ChatGoogleGenerativeAI = None
-
-# HuggingFace embeddings wrapper
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings
-except Exception:
-    try:
-        from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-    except Exception:
-        HuggingFaceEmbeddings = None
-
-# sentence-transformers (optional)
-try:
-    from sentence_transformers import SentenceTransformer
-except Exception:
-    SentenceTransformer = None
-
-# -------------------------
-# CONFIG
-# -------------------------
-BASE_DATA_DIR = Path("data")
-INDEX_SUBDIR = "rag_index"
-EMBED_MODEL = "all-MiniLM-L6-v2"
-LLM_MODEL = "gemini-2.5-flash"
-RETRIEVER_K = 8
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 150
-
-VECTORS_FILE = "vectors.npy"
-META_FILE = "meta.pkl"
-
-BASE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ========================================
@@ -234,115 +169,7 @@ if 'query_cache' not in st.session_state:
 
 
 # -------------------------
-# Helpers: file loaders / splitting
-# -------------------------
-def get_user_folder(username: str) -> Path:
-    uname = "".join(c for c in username if c.isalnum() or c in ("_", "-")).strip() or "anonymous"
-    folder = BASE_DATA_DIR / uname
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
-
-def _get_loader_for_path(fp: Path):
-    ext = fp.suffix.lower()
-    if ext == ".pdf":
-        return PyPDFLoader
-    if ext in [".txt", ".md"]:
-        return TextLoader
-    if ext == ".csv":
-        return CSVLoader
-    if ext == ".docx":
-        return Docx2txtLoader
-    if ext in [".html", ".htm"]:
-        return UnstructuredHTMLLoader
-    return None
-
-def load_documents_from_folder(folder: Path) -> List[Document]:
-    docs = []
-    patterns = ["*.pdf", "*.txt", "*.md", "*.csv", "*.docx", "*.html", "*.htm"]
-    for pattern in patterns:
-        for fp in sorted(folder.rglob(pattern)):
-            Loader = _get_loader_for_path(fp)
-            if not Loader:
-                continue
-            try:
-                if Loader in (CSVLoader, TextLoader):
-                    loader = Loader(str(fp), encoding="utf-8")
-                else:
-                    loader = Loader(str(fp))
-                file_docs = loader.load()
-                for d in file_docs:
-                    d.metadata = getattr(d, "metadata", {}) or {}
-                    d.metadata["source"] = fp.name
-                docs.extend(file_docs)
-                st.info(f"✅ Loaded {len(file_docs)} docs from {fp.name}")
-            except Exception as e:
-                st.warning(f"⚠️ Skipped {fp.name}: {e}")
-    return docs
-
-
-# -------------------------
-# Cached embeddings loader
-# -------------------------
-@st.cache_resource
-def load_embeddings_model():
-    if HuggingFaceEmbeddings is None:
-        raise RuntimeError("HuggingFaceEmbeddings not available — install langchain-huggingface or provide embeddings.")
-    return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
-
-
-# -------------------------
-# Simple vector store
-# -------------------------
-def persist_simple_index(index_folder: Path, vectors: np.ndarray, docs: List[Document]):
-    index_folder.mkdir(parents=True, exist_ok=True)
-    np.save(index_folder / VECTORS_FILE, vectors)
-    meta = [{"page_content": d.page_content, "metadata": getattr(d, "metadata", {})} for d in docs]
-    with open(index_folder / META_FILE, "wb") as f:
-        pickle.dump(meta, f)
-
-def load_simple_index(index_folder: Path):
-    vpath = index_folder / VECTORS_FILE
-    mpath = index_folder / META_FILE
-    if not vpath.exists() or not mpath.exists():
-        return None, None
-    vectors = np.load(vpath)
-    with open(mpath, "rb") as f:
-        meta = pickle.load(f)
-    docs = []
-    for m in meta:
-        docs.append(Document(page_content=m["page_content"], metadata=m.get("metadata", {})))
-    return vectors, docs
-
-def cosine_sim_matrix(vecs: np.ndarray, qvec: np.ndarray):
-    denom = (np.linalg.norm(vecs, axis=1) * (np.linalg.norm(qvec) + 1e-12)) + 1e-12
-    sims = np.dot(vecs, qvec) / denom
-    sims = np.nan_to_num(sims)
-    return sims
-
-class SimpleRetriever:
-    def __init__(self, vectors: np.ndarray, docs: List[Document], embeddings, k=8):
-        self.vectors = vectors
-        self.docs = docs
-        self.embeddings = embeddings
-        self.k = k
-
-    def get_relevant_documents(self, query: str) -> List[Document]:
-        try:
-            if hasattr(self.embeddings, "embed_query"):
-                qvec = np.array(self.embeddings.embed_query(query))
-            else:
-                qvec = np.array(self.embeddings.embed_documents([query]))[0]
-        except Exception:
-            qvec = np.array(self.embeddings.embed_documents([query]))[0]
-
-        sims = cosine_sim_matrix(self.vectors, qvec)
-        topk = sims.argsort()[::-1][: self.k]
-        docs_out = [self.docs[i] for i in topk]
-        return docs_out
-
-
-# -------------------------
-# Robust extractor for LLM responses (must be before wrappers)
+# Robust extractor for LLM responses
 # -------------------------
 def _extract_text_from_llm_response(raw):
     try:
@@ -393,56 +220,12 @@ def _extract_text_from_llm_response(raw):
 
 
 # -------------------------
-# Adapter class for SimpleRetriever
-# -------------------------
-class SimpleRetrieverAdapter(BaseRetriever):
-    model_config = {"extra": "allow"}
-    def __init__(self, simple_retriever):
-        object.__setattr__(self, "simple", simple_retriever)
-        object.__setattr__(self, "tags", [])
-        object.__setattr__(self, "metadata", {})
-
-    def __getattr__(self, name):
-        try:
-            return getattr(self.simple, name)
-        except AttributeError:
-            raise AttributeError(f"{self.__class__.__name__} has no attribute {name}")
-
-    def get_relevant_documents(self, query: str):
-        return self.simple.get_relevant_documents(query)
-
-    async def aget_relevant_documents(self, query: str):
-        return self.get_relevant_documents(query)
-
-    def get_relevant_documents_with_score(self, query: str):
-        if hasattr(self.simple, "vectors") and hasattr(self.simple, "docs") and hasattr(self.simple, "embeddings"):
-            try:
-                embeddings = self.simple.embeddings
-                if hasattr(embeddings, "embed_query"):
-                    qvec = np.array(embeddings.embed_query(query))
-                else:
-                    qvec = np.array(embeddings.embed_documents([query]))[0]
-            except Exception:
-                qvec = np.array(embeddings.embed_documents([query]))[0]
-            vecs = self.simple.vectors
-            denom = (np.linalg.norm(vecs, axis=1) * (np.linalg.norm(qvec) + 1e-12)) + 1e-12
-            sims = np.dot(vecs, qvec) / denom
-            sims = np.nan_to_num(sims)
-            topk_idxs = sims.argsort()[::-1][: self.simple.k if hasattr(self.simple, "k") else sims.shape[0]]
-            return [(self.simple.docs[i], float(sims[i])) for i in topk_idxs]
-        else:
-            docs = self.simple.get_relevant_documents(query)
-            return [(d, 1.0) for d in docs]
-
-
-# -------------------------
-# Robust fallback QA wrapper (single)
+# Robust fallback QA wrapper
 # -------------------------
 class SimpleQAWrapper:
     """
     Robust fallback QA wrapper that prefers ChatGoogleGenerativeAI.invoke(str).
     """
-
     def __init__(self, llm, retriever, prompt_template):
         self.llm = llm
         self.retriever = retriever
@@ -461,7 +244,7 @@ class SimpleQAWrapper:
         last_err = None
         last_raw = None
 
-        # Prefer invoking with a plain string (works for your wrapper)
+        # Prefer invoking with a plain string
         inv_fn = getattr(self.llm, "invoke", None)
         if callable(inv_fn):
             try:
@@ -511,48 +294,6 @@ class SimpleQAWrapper:
 
 
 # -------------------------
-# Build / load simple index
-# -------------------------
-def build_simple_index(data_folder: Path, index_folder: Path):
-    docs = load_documents_from_folder(data_folder)
-    if not docs:
-        raise ValueError("No supported files found to index.")
-    if RecursiveCharacterTextSplitter is None:
-        raise RuntimeError("Text splitter not available — install langchain-text-splitters or compatible langchain.")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
-    chunks = splitter.split_documents(docs)
-    st.info(f"📊 Created {len(chunks)} chunks from {len(docs)} documents")
-    embeddings = load_embeddings_model()
-    texts = [d.page_content for d in chunks]
-    progress_bar = st.progress(0)
-    vecs = []
-    batch_size = 32
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i+batch_size]
-        try:
-            batch_vecs = embeddings.embed_documents(batch)
-            vecs.extend(batch_vecs)
-        except Exception:
-            for t in batch:
-                vecs.append(embeddings.embed_documents([t])[0])
-        progress_bar.progress(min((i + batch_size) / len(texts), 1.0))
-    vectors = np.array(vecs)
-    persist_simple_index(index_folder, vectors, chunks)
-    st.success(f"✅ Index saved with {len(chunks)} chunks")
-    retriever = SimpleRetriever(vectors=vectors, docs=chunks, embeddings=embeddings, k=RETRIEVER_K)
-    return retriever
-
-def load_or_build_simple_index_for_user(user_folder: Path):
-    index_path = user_folder / INDEX_SUBDIR
-    vectors, docs = load_simple_index(index_path)
-    embeddings = load_embeddings_model()
-    if vectors is not None and docs is not None:
-        st.info(f"📚 Loaded existing index with {len(docs)} chunks")
-        return SimpleRetriever(vectors=vectors, docs=docs, embeddings=embeddings, k=RETRIEVER_K)
-    return build_simple_index(user_folder, index_path)
-
-
-# -------------------------
 # LLM prompt / QA builder
 # -------------------------
 PROMPT_TEMPLATE_STR = (
@@ -562,24 +303,23 @@ PROMPT_TEMPLATE_STR = (
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)
 
 def create_qa_from_retriever(retriever):
-    wrapped = SimpleRetrieverAdapter(retriever)
     if ChatGoogleGenerativeAI is None:
         raise RuntimeError("ChatGoogleGenerativeAI (langchain-google-genai) not available; install it.")
-    llm = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2, max_output_tokens=1024)
+    llm = ChatGoogleGenerativeAI(model=settings.LLM_MODEL, temperature=0.2, max_output_tokens=1024)
     try:
         if RetrievalQA is None:
             raise ImportError("RetrievalQA not importable in this environment.")
         qa = RetrievalQA.from_chain_type(
             llm=llm,
-            retriever=wrapped,
+            retriever=retriever,
             return_source_documents=True,
             chain_type="stuff",
             chain_type_kwargs={"prompt": prompt_template},
         )
         return qa
     except Exception as e:
-        st.warning(f"⚠️ Could not create RetrievalQA chain (falling back to internal wrapper): {e}")
-        return SimpleQAWrapper(llm=llm, retriever=wrapped, prompt_template=prompt_template)
+        logger.warning(f"⚠️ Could not create RetrievalQA chain (falling back to internal wrapper): {e}")
+        return SimpleQAWrapper(llm=llm, retriever=retriever, prompt_template=prompt_template)
 
 
 # -------------------------
@@ -602,7 +342,13 @@ def _call_chain_safe(qa_chain, query: str):
             raise RuntimeError(f"Could not invoke QA chain - last error: {e}")
 
     # Otherwise try common langchain chain call patterns
-    call_methods = [("run", lambda fn, q: fn(q)), ("invoke", lambda fn, q: fn(q)), ("__call__", lambda fn, q: fn(q)), ("predict", lambda fn, q: fn(q)), ("generate", lambda fn, q: fn([q]))]
+    call_methods = [
+        ("run", lambda fn, q: fn(q)),
+        ("invoke", lambda fn, q: fn(q)),
+        ("__call__", lambda fn, q: fn(q)),
+        ("predict", lambda fn, q: fn(q)),
+        ("generate", lambda fn, q: fn([q]))
+    ]
     for name, caller in call_methods:
         fn = getattr(qa_chain, name, None)
         if not callable(fn):
@@ -678,8 +424,10 @@ def query_with_features(qa_chain, query: str):
 
     for attempt in range(max_retries):
         try:
+            logger.info("Search started...")
             result = _call_chain_safe(qa_chain, query)
             elapsed = time.time() - start_time
+            logger.info(f"Search completed in {elapsed:.2f}s.")
             estimated_tokens = int(len(query.split()) + len(result.get("result", "").split()) * 1.3)
             metrics.log_query(query, elapsed, cached=False, tokens=int(estimated_tokens))
             cache.set(query, result)
@@ -715,68 +463,303 @@ def query_with_features(qa_chain, query: str):
     return None, False, time.time() - start_time
 
 
-# -------------------------
-# Streamlit UI (bottom)
-# -------------------------
-st.set_page_config(page_title="Clinical Docs Search", layout="wide")
+# ========================================
+# APPLICATION STARTUP & INITIALIZATION
+# ========================================
+def initialize_app():
+    """
+    Startup Health Check & Synchronization workflow.
+    - Connects to R2
+    - Checks index files availability
+    - Downloads index files if present or creates a new empty FAISS index.
+    """
+    if "vector_store" not in st.session_state:
+        st.session_state.health_status = {
+            "r2_connected": False,
+            "index_loaded": False,
+            "version": 0,
+            "last_updated": "Never",
+            "message": ""
+        }
+        
+        # Initialize default vector store structure
+        store = FAISSVectorStore()
+        
+        # Health Check: Connect to R2
+        r2_connected = r2_storage.verify_connection()
+        st.session_state.health_status["r2_connected"] = r2_connected
+        
+        if r2_connected:
+            # Health Check: Verify if Index files exist on Cloudflare R2
+            logger.info("Checking index availability on R2...")
+            index_files_exist = False
+            try:
+                index_files_exist = (
+                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}") and
+                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}") and
+                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+                )
+            except Exception as e:
+                logger.error(f"R2 verification error: {e}")
+                
+            if index_files_exist:
+                logger.info("Downloading index from R2...")
+                try:
+                    # Synchronize Local Cache
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                        settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                    )
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                        settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                    )
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                        settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                    )
+                    
+                    # Load FAISS index and metadata
+                    store.load(str(settings.INDEXES_DIR))
+                    st.session_state.health_status["index_loaded"] = True
+                    
+                    # Extract version details
+                    doc_meta = get_document_metadata()
+                    st.session_state.health_status["version"] = doc_meta.get("version", 0)
+                    st.session_state.health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
+                    st.session_state.health_status["message"] = f"Synchronized successfully with R2 index (v{st.session_state.health_status['version']})."
+                    
+                except Exception as e:
+                    logger.error(f"Failed to synchronize index from R2: {e}")
+                    st.session_state.health_status["message"] = f"Failed to load R2 index files: {e}. Falling back to empty index."
+                    # Fallback to local empty
+                    store = FAISSVectorStore()
+                    store.save(str(settings.INDEXES_DIR))
+                    empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+                    save_document_metadata(empty_meta)
+            else:
+                logger.info("No index files found on R2. Initializing empty index...")
+                st.session_state.health_status["message"] = "Cloudflare R2 empty. Initialized empty local index."
+                # Save empty local files
+                store.save(str(settings.INDEXES_DIR))
+                empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+                save_document_metadata(empty_meta)
+        else:
+            logger.warning("R2 Connection failed on startup. Checking if local cache exists offline...")
+            st.session_state.health_status["message"] = "Offline mode: R2 connection failed."
+            
+            # Check if local files exist offline
+            local_exists = (
+                (settings.INDEXES_DIR / settings.FAISS_INDEX_FILE).exists() and
+                (settings.INDEXES_DIR / settings.METADATA_PKL_FILE).exists() and
+                (settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE).exists()
+            )
+            if local_exists:
+                try:
+                    store.load(str(settings.INDEXES_DIR))
+                    st.session_state.health_status["index_loaded"] = True
+                    doc_meta = get_document_metadata()
+                    st.session_state.health_status["version"] = doc_meta.get("version", 0)
+                    st.session_state.health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
+                except Exception as e:
+                    logger.error(f"Error loading offline cache: {e}")
+                    store = FAISSVectorStore()
+                    store.save(str(settings.INDEXES_DIR))
+                    empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+                    save_document_metadata(empty_meta)
+            else:
+                store.save(str(settings.INDEXES_DIR))
+                empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+                save_document_metadata(empty_meta)
+                
+        st.session_state.vector_store = store
+
+# Initialize state
+initialize_app()
+
+
+# ========================================
+# STREAMLIT UI - RICH DESIGN AESTHETICS
+# ========================================
+st.set_page_config(page_title="Clinical Docs Search (Cloudflare R2 RAG)", layout="wide")
+
+# Inject Custom Elegant Styling for Premium Aesthetics
+st.markdown("""
+<style>
+    /* Styling headers & cards */
+    .stApp {
+        background: radial-gradient(circle at 10% 20%, rgb(18, 25, 41) 0%, rgb(10, 12, 18) 90%);
+        color: #f0f3f9;
+    }
+    .css-1d391kg {
+        background-color: rgba(18, 22, 33, 0.9) !important;
+    }
+    h1 {
+        background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-family: 'Outfit', sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+    }
+    .metric-card {
+        background: rgba(30, 41, 59, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 15px;
+        backdrop-filter: blur(10px);
+        margin-bottom: 10px;
+    }
+    .stButton>button {
+        background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+        color: white;
+        border: none;
+        padding: 10px 24px;
+        font-weight: 600;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+    }
+    .stAlert {
+        border-radius: 8px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
-    st.title("📚 Clinical Docs Search")
+    st.title("📚 Clinical Docs Search & Assistant")
+    st.caption("🚀 Migrated to Cloudflare R2 Persistent Storage & FAISS Incremental Indexing")
 with col2:
     stats = st.session_state.metrics.get_stats()
     st.metric("Total Queries", stats["total_queries"])
 
+# Sidebar Stats & Details
 st.sidebar.header("📊 System Metrics")
 stats = st.session_state.metrics.get_stats()
-col1, col2 = st.sidebar.columns(2)
-col1.metric("Cache Hit Rate", stats["cache_hit_rate"])
-col2.metric("Error Rate", stats["error_rate"])
-col1.metric("Avg Response", stats["avg_response_time"])
-col2.metric("Total Tokens", f"{stats['total_tokens']:,}")
+col_s1, col_s2 = st.sidebar.columns(2)
+col_s1.metric("Cache Hit Rate", stats["cache_hit_rate"])
+col_s2.metric("Error Rate", stats["error_rate"])
+col_s1.metric("Avg Response", stats["avg_response_time"])
+col_s2.metric("Total Tokens", f"{stats['total_tokens']:,}")
 st.sidebar.metric("Estimated Cost", stats["estimated_cost"])
+
 cache_stats = st.session_state.query_cache.get_stats()
 st.sidebar.metric("Cache Usage", f"{cache_stats['size']}/{cache_stats['max_size']}")
+
 st.sidebar.markdown("---")
 
-st.sidebar.header("User & Files")
-username = st.sidebar.text_input("Your username (team name or email)", value="guest")
-user_folder = get_user_folder(username)
+# Health Status Panel
+st.sidebar.header("🌐 R2 Storage Node Status")
+status = st.session_state.health_status
+if status["r2_connected"]:
+    st.sidebar.success("✅ Connected to Cloudflare R2")
+    st.sidebar.markdown(f"**Index Version**: v{status['version']}")
+    st.sidebar.markdown(f"**Last Sync**: `{status['last_updated'][:19]}`")
+else:
+    st.sidebar.warning("⚠️ R2 Disconnected (Offline Mode)")
+    
+with st.sidebar.expander("ℹ️ Connection Details"):
+    st.write(f"Endpoint: `{settings.R2_ENDPOINT or 'None'}`")
+    st.write(f"Bucket: `{settings.R2_BUCKET_NAME or 'None'}`")
+    st.caption(status["message"])
 
+if st.sidebar.button("🔄 Sync with Cloudflare R2"):
+    st.session_state.pop("vector_store", None)
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# Sidebar file uploader
+st.sidebar.header("📁 Document Ingestion")
 uploaded = st.sidebar.file_uploader(
-    "Upload files (PDF, DOCX, TXT, CSV, MD, HTML)",
+    "Upload clinical trial files (PDF, DOCX, TXT, CSV, MD, HTML)",
     type=["pdf", "docx", "txt", "csv", "md", "html"],
     accept_multiple_files=True,
 )
 
+# Set of processed file names in this session to prevent duplicate spams on rerun
+if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = set()
+
 if uploaded:
-    saved = 0
-    for f in uploaded:
-        try:
-            (user_folder / f.name).write_bytes(f.getbuffer())
-            saved += 1
-        except Exception as e:
-            st.warning(f"Failed to save {f.name}: {e}")
-    st.sidebar.success(f"✅ Saved {saved} file(s)")
+    new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]
+    if new_files:
+        for f in new_files:
+            # Generate unique owner session id for distributed optimistic lock
+            owner_id = f"session_{int(time.time())}_{f.name.replace(' ', '_')}"
+            
+            with st.sidebar.spinner(f"🔒 Acquiring R2 Lock for {f.name}..."):
+                # Acquire Lock
+                lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+                
+            if not lock_acquired:
+                st.sidebar.error(f"❌ Locking Conflict: another operation is writing to the index. Skip {f.name}.")
+                continue
+                
+            try:
+                # 1. Pull the latest index from R2 to avoid overwriting newer changes (Optimistic Concurrency Control)
+                if st.session_state.health_status["r2_connected"]:
+                    with st.sidebar.spinner("Syncing latest index..."):
+                        try:
+                            r2_storage.download_file(
+                                f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                                settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                            )
+                            r2_storage.download_file(
+                                f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                                settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                            )
+                            r2_storage.download_file(
+                                f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                                settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                            )
+                            st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+                        except Exception as e:
+                            logger.info(f"No active remote index to pull: {e}")
+                
+                # 2. Process, chunk, embed, append and upload updated index
+                with st.sidebar.spinner(f"Ingesting & Embedding {f.name}..."):
+                    res = process_and_index_file(f.name, f.getvalue(), st.session_state.vector_store)
+                    
+                if res["status"] == "success":
+                    st.sidebar.success(f"✅ Successfully Indexed {f.name}")
+                    # Log execution times to screen
+                    timings = res.get("timings", {})
+                    with st.sidebar.expander(f"⏱️ Profiling Logs: {f.name}"):
+                        for step, duration in timings.items():
+                            st.write(f"**{step.replace('_', ' ').title()}**: `{duration:.2f}s`")
+                    # Update status
+                    doc_meta = get_document_metadata()
+                    st.session_state.health_status["version"] = doc_meta.get("version", 0)
+                    st.session_state.health_status["last_updated"] = doc_meta.get("last_updated", "Just now")
+                elif res["status"] == "skipped":
+                    st.sidebar.info(res["message"])
+                else:
+                    st.sidebar.error(res["message"])
+                    
+                st.session_state.processed_files.add(f.name)
+            finally:
+                # Release Distributed Lock
+                r2_storage.release_lock(owner_id)
 
-if st.sidebar.button("🔧 Build / Rebuild Index"):
-    try:
-        with st.spinner("Indexing… this may take a few minutes for large files."):
-            build_simple_index(user_folder, user_folder / INDEX_SUBDIR)
-        st.sidebar.success("✅ Index built successfully!")
-    except Exception as e:
-        st.sidebar.error(f"❌ Index build failed: {e}")
-
-st.sidebar.markdown("### Your files")
-files = sorted([p.name for p in user_folder.rglob("*") if p.is_file() and p.name not in [VECTORS_FILE, META_FILE]])
-if files:
-    for fname in files:
-        st.sidebar.write("📄", fname)
+st.sidebar.markdown("### 📄 Active Index Files")
+metadata = get_document_metadata()
+indexed_docs = metadata.get("documents", {})
+if indexed_docs:
+    for doc_id, doc in indexed_docs.items():
+        st.sidebar.markdown(f"📄 **{doc.get('filename')}**")
+        st.sidebar.caption(f"Chunks: {doc.get('chunk_count')} | Hash: `{doc.get('hash')[:8]}...`")
 else:
-    st.sidebar.write("No files yet. Upload files and click Build Index.")
+    st.sidebar.caption("No files indexed yet. Upload clinical data above.")
 
-st.header("🔎 Search")
-q = st.text_area("Ask a question about your uploaded docs", height=120)
+# Search UI Main Section
+st.header("🔎 Ask Assistant")
+q = st.text_area("Ask a question about your clinical trials / study data standards", height=120, placeholder="What are the inclusion criteria for the studies?")
+
 with st.expander("💡 Example Questions"):
     st.markdown("""
     - What are the main findings of the study?
@@ -785,64 +768,66 @@ with st.expander("💡 Example Questions"):
     - Summarize the methodology
     """)
 
-if st.button("🔍 Search", type="primary"):
+if st.button("🔍 Search Database", type="primary"):
     if not q.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY"):
-        st.error("❌ Missing GOOGLE_API_KEY — set as an environment variable or Streamlit secret.")
+        st.error("❌ Missing GOOGLE_API_KEY environment variable. Please set it to connect to Gemini LLM.")
     else:
-        user_files = sorted([p for p in user_folder.rglob("*") if p.is_file() and p.name not in [VECTORS_FILE, META_FILE]])
-        if not user_files:
-            st.error("❌ No files found. Please upload files and build the index first.")
+        # Check if local index has vectors
+        if st.session_state.vector_store.index.ntotal == 0:
+            st.error("❌ Index is empty. Please upload documents in the sidebar first.")
         else:
-            index_path = user_folder / INDEX_SUBDIR
-            if not index_path.exists() or not any(index_path.iterdir()):
-                with st.spinner("📦 Index not found — building now..."):
-                    try:
-                        build_simple_index(user_folder, index_path)
-                        st.success("✅ Index built successfully!")
-                    except Exception as e:
-                        st.error(f"❌ Failed to build index: {e}")
-                        st.stop()
+            # Wrap local FAISS VectorStore into Retriever Adapter
+            retriever = VectorStoreRetrieverAdapter(st.session_state.vector_store, k=settings.RETRIEVER_K)
             try:
-                retriever = load_or_build_simple_index_for_user(user_folder)
+                qa = create_qa_from_retriever(retriever)
             except Exception as e:
-                st.error(f"❌ Error loading index: {e}")
-                retriever = None
-            if retriever:
-                try:
-                    qa = create_qa_from_retriever(retriever)
-                except Exception as e:
-                    st.error(f"❌ QA chain init failed: {e}")
-                    st.stop()
-                with st.spinner("🔍 Retrieving and generating answer…"):
-                    result, was_cached, elapsed = query_with_features(qa, q)
-                if result:
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.subheader("✨ Answer")
-                    with col2:
-                        st.metric("Response Time", f"{elapsed:.2f}s")
-                    with col3:
-                        st.metric("Source", "🎯 Cache" if was_cached else "🤖 LLM")
-                    st.markdown(result.get("result", "").strip() if result.get("result") else "")
-                    st.subheader("📚 Sources")
-                    uniq = list({d.metadata.get("source", "unknown") for d in result.get("source_documents", [])})
-                    if uniq:
-                        for s in uniq:
-                            st.write("📄", s)
-                    with st.expander("🔍 View Evidence Snippets"):
-                        for i, d in enumerate(result.get("source_documents", [])[:6], 1):
-                            st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
-                            st.text(d.page_content[:400].replace('\n', ' '))
-                            st.markdown("---")
-                    st.markdown("### Was this helpful?")
-                    col1, col2, col3 = st.columns([1, 1, 4])
-                    with col1:
-                        if st.button("👍 Yes"):
-                            st.success("Thanks for your feedback!")
-                    with col2:
-                        if st.button("👎 No"):
-                            feedback = st.text_input("What could be improved?")
-                            if feedback:
-                                st.info("Feedback recorded. Thank you!")
+                st.error(f"❌ QA chain initialization failed: {e}")
+                st.stop()
+                
+            with st.spinner("🧠 Retrieving clinical context and generating answer..."):
+                t_search_start = time.time()
+                result, was_cached, elapsed = query_with_features(qa, q)
+                search_execution_time = time.time() - t_search_start
+                logger.info(f"Search execution completed in {search_execution_time:.2f}s")
+                
+            if result:
+                col_r1, col_r2, col_r3 = st.columns([3, 1, 1])
+                with col_r1:
+                    st.subheader("✨ Response")
+                with col_r2:
+                    st.metric("Query Execution", f"{elapsed:.2f}s")
+                with col_r3:
+                    st.metric("Source Node", "🎯 Cache" if was_cached else "🤖 Gemini LLM")
+                    
+                st.markdown(result.get("result", "").strip() if result.get("result") else "")
+                
+                st.subheader("📚 Sources Cited")
+                uniq = list({d.metadata.get("source", "unknown") for d in result.get("source_documents", [])})
+                if uniq:
+                    for s in uniq:
+                        st.write("📄", s)
+                else:
+                    st.caption("No explicit sources cited.")
+                    
+                with st.expander("🔍 View Context Evidence Snippets"):
+                    for i, d in enumerate(result.get("source_documents", [])[:6], 1):
+                        st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
+                        # Display chunk score if available
+                        score = d.metadata.get("score")
+                        if score is not None:
+                            st.caption(f"Cosine Similarity Score: `{score:.4f}` | Chunk ID: `{d.metadata.get('chunk_id')}`")
+                        st.text(d.page_content[:400].replace('\n', ' '))
+                        st.markdown("---")
+                        
+                st.markdown("### Was this helpful?")
+                col_f1, col_f2, col_f3 = st.columns([1, 1, 4])
+                with col_f1:
+                    if st.button("👍 Yes"):
+                        st.success("Thanks for your feedback!")
+                with col_f2:
+                    if st.button("👎 No"):
+                        feedback = st.text_input("What could be improved?")
+                        if feedback:
+                            st.info("Feedback recorded. Thank you!")

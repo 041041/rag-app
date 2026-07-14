@@ -1004,6 +1004,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Startup check trigger at top-level to prevent AttributeError
+if "vector_store" not in st.session_state:
+    with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
+        store, health_status = initialize_rag()
+        st.session_state.vector_store = store
+        st.session_state.health_status = health_status
+else:
+    sync_index_if_version_changed()
+
 col1, col2 = st.columns([3, 1])
 with col1:
     st.title("📚 Clinical Docs Search & Assistant")
@@ -1134,14 +1143,7 @@ if uploaded:
                 # Release Distributed Lock
                 r2_storage.release_lock(owner_id)
 
-# Startup check trigger
-if "vector_store" not in st.session_state:
-    with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
-        store, health_status = initialize_rag()
-        st.session_state.vector_store = store
-        st.session_state.health_status = health_status
-else:
-    sync_index_if_version_changed()
+# Startup check complete. Moving to layout split.
 
 # Main Layout Split (Requirement 1)
 col_left, col_right = st.columns([13, 8])

@@ -630,7 +630,7 @@ st.markdown("""
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgb(15, 23, 42) 0%, rgb(10, 12, 18) 100%) !important;
     }
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label, .stApp span, .stApp div {
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label, .stMarkdown {
         color: #f0f3f9;
     }
     .stApp textarea, .stApp input, .stApp select {

@@ -641,7 +641,7 @@ def confirm_delete_dialog(doc_id: str, filename: str):
             delete_document_workflow(doc_id)
             st.rerun()
 
-@st.dialog("🗄️ Document Management Portal", width="large")
+@st.dialog("🗄️ Document Management Portal")
 def document_management_dialog():
     """
     Modal dialog overlay for the Document Management Portal.
@@ -1102,17 +1102,42 @@ st.markdown("""
         margin: 0 auto !important;
         display: block !important;
     }
-    /* Theme-aware Modal Dialogs / Popovers */
-    div[role="dialog"], div[data-testid="stDialog"] {
+    /* Style the sidebar secondary buttons (Manage Documents) */
+    [data-testid="stSidebar"] button {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
+        color: #f0f3f9 !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+    }
+    [data-testid="stSidebar"] button:hover {
+        background: linear-gradient(135deg, #334155 0%, #1e293b 100%) !important;
+        color: #ffffff !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+    }
+    /* Theme-aware Modal Dialogs / Backdrops */
+    [data-testid="stDialog"] {
+        background-color: rgba(10, 12, 18, 0.75) !important;
+        backdrop-filter: blur(6px) !important;
+    }
+    div[role="dialog"], [data-testid="stDialog"] [role="dialog"], [data-testid="stModal"] > div {
         background-color: rgb(15, 23, 42) !important;
+        background: rgb(15, 23, 42) !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         border-radius: 16px !important;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5) !important;
     }
-    div[role="dialog"] h1, div[role="dialog"] h2, div[role="dialog"] h3, div[role="dialog"] p, div[role="dialog"] label, div[role="dialog"] span, div[role="dialog"] div {
+    div[role="dialog"] h1, div[role="dialog"] h2, div[role="dialog"] h3, div[role="dialog"] h4, 
+    div[role="dialog"] p, div[role="dialog"] label, div[role="dialog"] span, div[role="dialog"] div, 
+    div[role="dialog"] small, div[role="dialog"] th, div[role="dialog"] td {
         color: #f0f3f9 !important;
     }
     div[role="dialog"] button {
         color: white !important;
+    }
+    /* Form inputs inside modal should remain highly readable */
+    div[role="dialog"] input, div[role="dialog"] textarea, div[role="dialog"] select {
+        color: #0f172a !important;
+        background-color: #ffffff !important;
     }
     div[data-testid="stPopoverBody"] {
         background-color: rgb(30, 41, 59) !important;
@@ -1278,7 +1303,7 @@ if st.session_state.get("query_filter"):
 
 q = st.text_area(
     "Ask anything about your clinical documents...",
-    height=120,
+    height=180,
     placeholder="Ask anything about your clinical documents...",
     value=st.session_state.get("query_input", ""),
     key="query_input_box",

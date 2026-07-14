@@ -90,6 +90,12 @@ try:
 except Exception:
     ChatGoogleGenerativeAI = None
 
+# Groq integration fallback
+try:
+    from langchain_groq import ChatGroq
+except Exception:
+    ChatGroq = None
+
 
 # ========================================
 # METRICS & CACHE
@@ -313,9 +319,21 @@ PROMPT_TEMPLATE_STR = (
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)
 
 def create_qa_from_retriever(retriever):
-    if ChatGoogleGenerativeAI is None:
-        raise RuntimeError("ChatGoogleGenerativeAI (langchain-google-genai) not available; install it.")
-    llm = ChatGoogleGenerativeAI(model=settings.LLM_MODEL, temperature=0.2, max_output_tokens=1024)
+    has_gemini = bool(os.environ.get("GOOGLE_API_KEY"))
+    has_groq = bool(os.environ.get("GROQ_API_KEY"))
+    
+    if not has_gemini and has_groq:
+        if ChatGroq is None:
+            raise RuntimeError("ChatGroq (langchain-groq) is not available; install it.")
+        model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-specdec")
+        llm = ChatGroq(model_name=model_name, temperature=0.2)
+        logger.info(f"Initialized Groq LLM with model: {model_name}")
+    else:
+        if ChatGoogleGenerativeAI is None:
+            raise RuntimeError("ChatGoogleGenerativeAI (langchain-google-genai) not available; install it.")
+        llm = ChatGoogleGenerativeAI(model=settings.LLM_MODEL, temperature=0.2, max_output_tokens=1024)
+        logger.info(f"Initialized Gemini LLM with model: {settings.LLM_MODEL}")
+        
     try:
         if RetrievalQA is None:
             raise ImportError("RetrievalQA not importable in this environment.")
@@ -781,8 +799,8 @@ with st.expander("💡 Example Questions"):
 if st.button("🔍 Search Database", type="primary"):
     if not q.strip():
         st.warning("⚠️ Please enter a question first.")
-    elif not os.environ.get("GOOGLE_API_KEY"):
-        st.error("❌ Missing GOOGLE_API_KEY or GEMINI_API_KEY environment variable. Please set it in Streamlit secrets.")
+    elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
+        st.error("❌ Missing GOOGLE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
     else:
         # Check if local index has vectors
         if st.session_state.vector_store.index.ntotal == 0:

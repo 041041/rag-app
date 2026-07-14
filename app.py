@@ -46,6 +46,9 @@ def ensure_event_loop():
 
 ensure_event_loop()
 
+# Set page config as the absolute first Streamlit command
+st.set_page_config(page_title="Clinical Docs Search (Cloudflare R2 RAG)", layout="wide")
+
 # --- LangChain imports and fallbacks ---
 try:
     from langchain_core.documents import Document
@@ -611,7 +614,6 @@ initialize_app()
 # ========================================
 # STREAMLIT UI - RICH DESIGN AESTHETICS
 # ========================================
-st.set_page_config(page_title="Clinical Docs Search (Cloudflare R2 RAG)", layout="wide")
 
 # Inject Custom Elegant Styling for Premium Aesthetics
 st.markdown("""

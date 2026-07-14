@@ -1170,6 +1170,21 @@ st.markdown("""
         color: #f0f3f9 !important;
         fill: #f0f3f9 !important;
     }
+    /* Style buttons inside st.expander to look like clickable list items */
+    div[data-testid="stExpander"] button {
+        background: transparent !important;
+        border: none !important;
+        color: #cbd5e1 !important;
+        padding: 0 !important;
+        text-align: left !important;
+        font-size: 0.95em !important;
+        margin-bottom: 8px !important;
+        display: block !important;
+    }
+    div[data-testid="stExpander"] button:hover {
+        color: #38bdf8 !important;
+        text-decoration: underline !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1335,20 +1350,23 @@ q = st.text_area(
 
 q_text = q
 
-# Clickable Chips for Example Questions (Requirement 6)
-st.markdown("<p style='font-size: 0.85em; opacity: 0.85; margin-bottom: 5px; font-weight: 600;'>💡 Try asking:</p>", unsafe_allow_html=True)
-col_chip1, col_chip2, col_chip3 = st.columns([1, 1, 1])
-with col_chip1:
-    if st.button("🏷 ADaM", key="chip_adam", use_container_width=True):
+# Clean expandable Example Questions panel (Requirement 2)
+with st.expander("💡 Example Questions", expanded=False):
+    if st.button("• What is ADaM?", key="ex_adam", use_container_width=False):
         st.session_state.query_input = "What is ADaM?"
+        st.session_state.search_executed = False
         st.rerun()
-with col_chip2:
-    if st.button("🏷 SDTM", key="chip_sdtm", use_container_width=True):
+    if st.button("• Explain SDTM.", key="ex_sdtm", use_container_width=False):
         st.session_state.query_input = "Explain SDTM."
+        st.session_state.search_executed = False
         st.rerun()
-with col_chip3:
-    if st.button("🏷 Inclusion Criteria", key="chip_criteria", use_container_width=True):
+    if st.button("• Show inclusion criteria.", key="ex_criteria", use_container_width=False):
         st.session_state.query_input = "Show inclusion criteria."
+        st.session_state.search_executed = False
+        st.rerun()
+    if st.button("• Summarize methodology.", key="ex_methodology", use_container_width=False):
+        st.session_state.query_input = "Summarize methodology."
+        st.session_state.search_executed = False
         st.rerun()
 
 # Initialize search states

@@ -607,8 +607,7 @@ def initialize_app():
                 
         st.session_state.vector_store = store
 
-# Initialize state
-initialize_app()
+# Startup initialization will run lazily in the main UI flow below
 
 
 # ========================================
@@ -686,6 +685,12 @@ st.sidebar.markdown("---")
 
 # Health Status Panel
 st.sidebar.header("🌐 R2 Storage Node Status")
+
+# Initialize app index and R2 connection lazily with a nice spinner
+if "vector_store" not in st.session_state:
+    with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
+        initialize_app()
+
 status = st.session_state.health_status
 if status["r2_connected"]:
     st.sidebar.success("✅ Connected to Cloudflare R2")

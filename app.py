@@ -1102,9 +1102,19 @@ st.markdown("""
     }
     /* Ask AI centered button size */
     .stApp div.row-widget.stButton > button[kind="primary"] {
-        width: 200px !important;
+        width: 240px !important;
+        height: 50px !important;
         margin: 0 auto !important;
         display: block !important;
+        border-radius: 12px !important;
+        font-size: 1.1em !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
+        transition: all 0.3s ease !important;
+    }
+    .stApp div.row-widget.stButton > button[kind="primary"]:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5) !important;
     }
     /* Style the sidebar secondary buttons (Manage Documents) */
     [data-testid="stSidebar"] button {
@@ -1341,128 +1351,178 @@ with col_chip3:
         st.session_state.query_input = "Show inclusion criteria."
         st.rerun()
 
-# Render Welcome Empty State (Requirement 8)
-if "search_executed" not in st.session_state and not q_text.strip():
+# Initialize search states
+if "searching" not in st.session_state:
+    st.session_state.searching = False
+if "search_executed" not in st.session_state:
+    st.session_state.search_executed = False
+
+# Run search synchronously on rerun if searching state is triggered (Requirement 4)
+if st.session_state.searching:
+    if st.session_state.vector_store.index.ntotal == 0:
+        st.error("❌ Index is empty. Please upload documents in the sidebar first.")
+        st.session_state.searching = False
+    else:
+        retriever = VectorStoreRetrieverAdapter(
+            st.session_state.vector_store,
+            k=settings.RETRIEVER_K,
+            filter_source=st.session_state.get("query_filter")
+        )
+        try:
+            qa = create_qa_from_retriever(retriever)
+        except Exception as e:
+            st.error(f"❌ QA chain initialization failed: {e}")
+            st.session_state.searching = False
+            st.stop()
+            
+        with st.spinner("🧠 Generating Answer..."):
+            t_search_start = time.time()
+            search_q = q_text
+            if st.session_state.get("query_filter"):
+                search_q = f"In document '{st.session_state.query_filter}': {q_text}"
+            result, was_cached, elapsed = query_with_features(qa, search_q)
+            search_execution_time = time.time() - t_search_start
+            logger.info(f"Search execution completed in {search_execution_time:.2f}s")
+            
+        if result:
+            st.session_state.search_executed = True
+            st.session_state.last_result = result
+            st.session_state.last_was_cached = was_cached
+            st.session_state.last_elapsed = elapsed
+            
+        st.session_state.searching = False
+        st.rerun()
+
+# Focus Javascript helper on chip click (Requirement 3)
+if st.session_state.get("query_input"):
     st.markdown("""
-    <div style='text-align: center; margin: 50px 0;'>
-        <h2 style='opacity: 0.9; font-weight: 600;'>👋 Welcome</h2>
-        <p style='opacity: 0.7;'>Upload documents in the sidebar and ask questions to get started.</p>
-    </div>
+    <script>
+    setTimeout(() => {
+        const textareas = window.parent.document.querySelectorAll('textarea');
+        for (const t of textareas) {
+            if (t.placeholder && t.placeholder.includes("Ask anything")) {
+                t.focus();
+                t.setSelectionRange(t.value.length, t.value.length);
+            }
+        }
+    }, 100);
+    </script>
     """, unsafe_allow_html=True)
 
-if st.button("Ask AI", type="primary", use_container_width=True):
+# Render Welcome Empty State (Requirement 2)
+if not st.session_state.search_executed and not q_text.strip():
+    if total_docs > 0:
+        st.markdown(f"""
+        <div style='text-align: center; margin: 40px 0; background-color: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 25px;'>
+            <h2 style='opacity: 0.95; font-weight: 600; color: #a5f3fc; margin-bottom: 10px;'>📚 Knowledge Base Ready</h2>
+            <p style='font-size: 1.15em; margin: 5px 0; font-weight: 500;'><strong>{total_docs}</strong> Documents Indexed &nbsp;|&nbsp; <strong>{total_chunks:,}</strong> Chunks Available</p>
+            <p style='opacity: 0.7; font-size: 0.95em;'>Ask any question about your uploaded clinical documents.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style='text-align: center; margin: 40px 0; background-color: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 25px;'>
+            <h2 style='opacity: 0.95; font-weight: 600; color: #cbd5e1; margin-bottom: 10px;'>📂 No documents uploaded yet</h2>
+            <p style='opacity: 0.7; font-size: 0.95em;'>Upload documents from the sidebar to start building your knowledge base.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+# Primary action button rendering (Requirement 1 & 4)
+btn_label = "⏳ Generating Answer..." if st.session_state.searching else "✨ Ask AI"
+if st.button(btn_label, type="primary", use_container_width=True, disabled=st.session_state.searching, key="primary_ask_ai_btn"):
     if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
         st.error("❌ Missing GOOGLE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
     else:
-        sync_index_if_version_changed()
+        st.session_state.searching = True
+        st.rerun()
+
+# Render Search Results if present
+if st.session_state.search_executed and st.session_state.get("last_result"):
+    result = st.session_state.last_result
+    was_cached = st.session_state.get("last_was_cached", False)
+    elapsed = st.session_state.get("last_elapsed", 0.0)
+    
+    # Render results inside a modern container card (Requirement 5 & 7 & 9)
+    with st.container(border=True):
+        st.subheader("✨ AI Answer")
+        st.markdown(result.get("result", "").strip() if result.get("result") else "")
         
-        if st.session_state.vector_store.index.ntotal == 0:
-            st.error("❌ Index is empty. Please upload documents in the sidebar first.")
-        else:
-            retriever = VectorStoreRetrieverAdapter(
-                st.session_state.vector_store,
-                k=settings.RETRIEVER_K,
-                filter_source=st.session_state.get("query_filter")
-            )
-            try:
-                qa = create_qa_from_retriever(retriever)
-            except Exception as e:
-                st.error(f"❌ QA chain initialization failed: {e}")
-                st.stop()
+        # Group and format sources
+        from collections import defaultdict
+        sources_group = defaultdict(list)
+        for d in result.get("source_documents", []):
+            source_name = d.metadata.get("source", "Unknown Document")
+            page = d.metadata.get("page", None)
+            chunk_id = d.metadata.get("chunk_id", None)
+            sources_group[source_name].append((page, chunk_id))
+            
+        if sources_group:
+            st.markdown("---")
+            st.markdown("#### 📄 Sources")
+            for source_name, chunks_info in sources_group.items():
+                pages = [p for p, c in chunks_info if p is not None]
+                chunks = [c for p, c in chunks_info if c is not None]
                 
-            with st.spinner("🧠 Retrieving clinical context and generating answer..."):
-                t_search_start = time.time()
-                search_q = q_text
-                if st.session_state.get("query_filter"):
-                    search_q = f"In document '{st.session_state.query_filter}': {q_text}"
-                result, was_cached, elapsed = query_with_features(qa, search_q)
-                search_execution_time = time.time() - t_search_start
-                logger.info(f"Search execution completed in {search_execution_time:.2f}s")
-                
-            if result:
-                st.session_state.search_executed = True
-                
-                # Render results inside a modern container card (Requirement 9)
-                with st.container(border=True):
-                    st.subheader("🤖 Answer")
-                    st.markdown(result.get("result", "").strip() if result.get("result") else "")
-                    
-                    # Group and format sources (Requirement 7)
-                    from collections import defaultdict
-                    sources_group = defaultdict(list)
-                    for d in result.get("source_documents", []):
-                        source_name = d.metadata.get("source", "Unknown Document")
-                        page = d.metadata.get("page", None)
-                        chunk_id = d.metadata.get("chunk_id", None)
-                        sources_group[source_name].append((page, chunk_id))
+                pages_str = ""
+                if pages:
+                    unique_pages = sorted(list(set(pages)))
+                    if len(unique_pages) == 1:
+                        pages_str = f"Page {unique_pages[0] + 1}"
+                    elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
+                        pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
+                    else:
+                        pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
                         
-                    if sources_group:
-                        st.markdown("---")
-                        st.markdown("#### 📄 Sources")
-                        for source_name, chunks_info in sources_group.items():
-                            pages = [p for p, c in chunks_info if p is not None]
-                            chunks = [c for p, c in chunks_info if c is not None]
-                            
-                            pages_str = ""
-                            if pages:
-                                unique_pages = sorted(list(set(pages)))
-                                if len(unique_pages) == 1:
-                                    pages_str = f"Page {unique_pages[0] + 1}"
-                                elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
-                                    pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
-                                else:
-                                    pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
-                                    
-                            chunks_str = ""
-                            if chunks:
-                                unique_chunks = sorted(list(set(chunks)))
-                                if len(unique_chunks) == 1:
-                                    chunks_str = f"Chunk {unique_chunks[0]}"
-                                elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
-                                    chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
-                                else:
-                                    chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
-                                    
-                            details = []
-                            if pages_str:
-                                details.append(pages_str)
-                            if chunks_str:
-                                details.append(chunks_str)
-                                
-                            details_str = f" ({', '.join(details)})" if details else ""
-                            st.write(f"📄 **{source_name}**{details_str}")
-                    
-                    # Render small horizontal metadata card (Requirement 9)
-                    num_docs_used = len(sources_group)
-                    num_chunks_retrieved = len(result.get("source_documents", []))
-                    cache_status_str = "🎯 Cache Hit" if was_cached else "🤖 LLM generated"
-                    
-                    st.markdown(f"""
-                    <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 15px; margin-top: 15px; font-size: 0.85em; opacity: 0.85; display: flex; justify-content: space-between;'>
-                        <span>⏱️ response time: <strong>{elapsed:.2f}s</strong></span>
-                        <span>🧩 retrieved chunks: <strong>{num_chunks_retrieved}</strong></span>
-                        <span>📄 docs used: <strong>{num_docs_used}</strong> ({cache_status_str})</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                chunks_str = ""
+                if chunks:
+                    unique_chunks = sorted(list(set(chunks)))
+                    if len(unique_chunks) == 1:
+                        chunks_str = f"Chunk {unique_chunks[0]}"
+                    elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
+                        chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
+                    else:
+                        chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
                         
-                # Collapsible Context Evidence block
-                with st.expander("🔍 View Context Evidence Snippets"):
-                    for i, d in enumerate(result.get("source_documents", [])[:6], 1):
-                        st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
-                        score = d.metadata.get("score")
-                        if score is not None:
-                            st.caption(f"Cosine Similarity Score: `{score:.4f}` | Chunk ID: `{d.metadata.get('chunk_id')}`")
-                        st.text(d.page_content[:400].replace('\n', ' '))
-                        st.markdown("---")
-                        
-                st.markdown("### Was this helpful?")
-                col_f1, col_f2, col_f3 = st.columns([1, 1, 4])
-                with col_f1:
-                    if st.button("👍 Yes"):
-                        st.success("Thanks for your feedback!")
-                with col_f2:
+                details = []
+                if pages_str:
+                    details.append(pages_str)
+                if chunks_str:
+                    details.append(chunks_str)
+                    
+                details_str = f" ({', '.join(details)})" if details else ""
+                st.write(f"📄 **{source_name}**{details_str}")
+        
+        # Render compact horizontal metadata card (Requirement 6)
+        num_docs_used = len(sources_group)
+        num_chunks_retrieved = len(result.get("source_documents", []))
+        
+        st.markdown(f"""
+        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 15px; margin-top: 15px; font-size: 0.9em; opacity: 0.9; display: flex; justify-content: space-around; align-items: center;'>
+            <span>⏱️ <strong>{elapsed:.2f} sec</strong></span>
+            <span>📄 <strong>{num_docs_used} Sources</strong></span>
+            <span>🧩 <strong>{num_chunks_retrieved} Chunks</strong></span>
+            <span>📚 <strong>{num_docs_used} Documents</strong></span>
+        </div>
+        """, unsafe_allow_html=True)
+            
+    # Collapsible Context Evidence block
+    with st.expander("🔍 View Context Evidence Snippets"):
+        for i, d in enumerate(result.get("source_documents", [])[:6], 1):
+            st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
+            score = d.metadata.get("score")
+            if score is not None:
+                st.caption(f"Cosine Similarity Score: `{score:.4f}` | Chunk ID: `{d.metadata.get('chunk_id')}`")
+            st.text(d.page_content[:400].replace('\n', ' '))
+            st.markdown("---")
+            
+    st.markdown("### Was this helpful?")
+    col_f1, col_f2, col_f3 = st.columns([1, 1, 4])
+    with col_f1:
+        if st.button("👍 Yes"):
+            st.success("Thanks for your feedback!")
+    with col_f2:
                     if st.button("👎 No"):
                         feedback = st.text_input("What could be improved?")
                         if feedback:

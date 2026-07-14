@@ -507,15 +507,6 @@ def initialize_rag():
     """
     print("🚀 [STARTUP LOG] [STEP 1] Running initialize_rag()...", flush=True)
     
-    # Standalone Test to bypass LangChain completely and verify if model load hangs
-    print("🚀 [TEST] Testing raw SentenceTransformer loading...", flush=True)
-    try:
-        from sentence_transformers import SentenceTransformer
-        test_model = SentenceTransformer("all-MiniLM-L6-v2")
-        print("🚀 [TEST] raw SentenceTransformer MODEL LOADED successfully!", flush=True)
-    except Exception as e:
-        print(f"🚀 [TEST] raw SentenceTransformer failed with exception: {e}", flush=True)
-        
     # 1. Initialize FAISSVectorStore
     print("🚀 [STARTUP LOG] [STEP 2] Creating FAISSVectorStore...", flush=True)
     store = FAISSVectorStore()

@@ -12,8 +12,7 @@ from rag.vector_store import VectorStore, Document
 
 logger = logging.getLogger("RAGApp.FAISSStore")
 logger.setLevel(logging.INFO)
-
-from functools import lru_cache
+import streamlit as st
 
 # Embeddings loader helpers
 try:
@@ -24,7 +23,7 @@ except ImportError:
     except ImportError:
         HuggingFaceEmbeddings = None
 
-@lru_cache(maxsize=1)
+@st.cache_resource
 def get_embeddings_model():
     """
     Load the HuggingFace embedding model.

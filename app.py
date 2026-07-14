@@ -800,7 +800,12 @@ else:
 
 # Search UI Main Section
 st.header("🔎 Ask Assistant")
-q = st.text_area("Ask a question about your clinical trials / study data standards", height=120, placeholder="What are the inclusion criteria for the studies?")
+q = st.text_area(
+    "Ask a question about your clinical trials / study data standards",
+    height=120,
+    placeholder="What are the inclusion criteria for the studies?",
+    key="query_input"
+)
 
 with st.expander("💡 Example Questions"):
     st.markdown("""

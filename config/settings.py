@@ -43,7 +43,7 @@ R2_INDEXES_PREFIX = "indexes/"
 R2_BACKUPS_PREFIX = "backups/"
 
 # RAG specific configurations
-EMBED_MODEL = "all-MiniLM-L6-v2"
+EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 LLM_MODEL = "gemini-2.5-flash"
 RETRIEVER_K = 8
 CHUNK_SIZE = 800

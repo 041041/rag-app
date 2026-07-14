@@ -24,105 +24,12 @@ except ImportError:
     except ImportError:
         HuggingFaceEmbeddings = None
 
-from langchain_core.embeddings import Embeddings
-
-class GoogleGenAIEmbeddings(Embeddings):
-    """
-    Custom LangChain Embeddings class wrapping the modern google-genai SDK.
-    Bypasses legacy REST and model-prefix translation layers.
-    """
-    def __init__(self, model: str = "text-embedding-004", google_api_key: Optional[str] = None):
-        from google import genai
-        api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
-        self.client = genai.Client(api_key=api_key)
-        self.model = model
-        
-        # 1. Query the SDK to list available models for the current API key
-        print("🚀 [STARTUP LOG] Querying Google GenAI SDK for available models list...", flush=True)
-        available_models = []
-        try:
-            model_list = self.client.models.list()
-            for m in model_list:
-                # 2. Identify models that support embeddings (checking supported_methods / supportedMethods)
-                methods = getattr(m, 'supported_methods', None) or getattr(m, 'supportedMethods', None) or []
-                if 'embedContent' in methods or any('embed' in method.lower() for method in methods):
-                    available_models.append(m.name)
-            print(f"🚀 [STARTUP LOG] All supported embedding models for this API key: {available_models}", flush=True)
-        except Exception as e:
-            print(f"🚀 [STARTUP LOG] Failed to query models list from SDK: {e}", flush=True)
-
-        # 5. Verify whether this API key supports the requested model
-        supported_model = None
-        for m_name in available_models:
-            # Check exact match or basename match
-            if m_name == self.model or m_name.split('/')[-1] == self.model.split('/')[-1]:
-                supported_model = m_name
-                break
-                
-        if supported_model:
-            print(f"🚀 [STARTUP LOG] Verified requested model '{self.model}' is available on this API key.", flush=True)
-            self.model = supported_model
-        else:
-            print(f"🚀 [STARTUP LOG] Requested embedding model '{self.model}' is NOT supported or not found for this API key.", flush=True)
-            # 6. Automatically use the first supported embedding model returned by the SDK
-            if available_models:
-                self.model = available_models[0]
-                print(f"🚀 [STARTUP LOG] Falling back dynamically to first supported model: '{self.model}'", flush=True)
-            else:
-                print(f"🚀 [STARTUP LOG] No supported embedding models found. Keeping default: '{self.model}'", flush=True)
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # 3. Print the exact request details and 4. Print endpoint URL
-        print(f"🚀 [EMBED REQUEST] API Endpoint: https://generativelanguage.googleapis.com/v1beta", flush=True)
-        print(f"🚀 [EMBED REQUEST] Method: Client.models.embed_content. Model: '{self.model}'", flush=True)
-        print(f"🚀 [EMBED REQUEST] Parameters: Batch of {len(texts)} chunks", flush=True)
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=texts
-        )
-        return [emb.values for emb in response.embeddings]
-
-    def embed_query(self, text: str) -> List[float]:
-        # 3. Print the exact request details and 4. Print endpoint URL
-        print(f"🚀 [EMBED REQUEST] API Endpoint: https://generativelanguage.googleapis.com/v1beta", flush=True)
-        print(f"🚀 [EMBED REQUEST] Method: Client.models.embed_content. Model: '{self.model}'", flush=True)
-        print(f"🚀 [EMBED REQUEST] Parameters: Single query", flush=True)
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=text
-        )
-        return response.embeddings[0].values
-
 @lru_cache(maxsize=1)
 def get_embeddings_model():
     """
-    Load the appropriate embedding model based on credentials.
+    Load the HuggingFace embedding model.
     """
-    # Prefer Google Gemini Embeddings (runs via API, bypassing PyTorch segfaults on Python 3.14)
-    google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if google_key:
-        try:
-            import google.genai
-            import importlib.metadata
-            genai_version = importlib.metadata.version("google-genai")
-        except Exception:
-            genai_version = "Unknown/Not Installed"
-            
-        print(f"🚀 [STARTUP LOG] google-genai SDK Version: {genai_version}", flush=True)
-        print("🚀 [STARTUP LOG] Instantiating custom GoogleGenAIEmbeddings wrapper...", flush=True)
-        print(f"🚀 [STARTUP LOG] Embedding Class: {GoogleGenAIEmbeddings.__name__}", flush=True)
-        
-        try:
-            model = GoogleGenAIEmbeddings(model="text-embedding-004", google_api_key=google_key)
-            # Test it immediately
-            model.embed_query("test")
-            print("🚀 [FAISSStore] Google Gemini embeddings initialized and verified successfully.", flush=True)
-            return model
-        except Exception as e:
-            print(f"🚀 [FAISSStore] Google Gemini embeddings test failed: {e}", flush=True)
-            print("🚀 [FAISSStore] Falling back to local HuggingFace embeddings...", flush=True)
-        
-    print("🚀 [FAISSStore] Loading HuggingFace embeddings model (all-MiniLM-L6-v2) (Local CPU Mode)...", flush=True)
+    print(f"🚀 [FAISSStore] Loading HuggingFace embeddings model: {settings.EMBED_MODEL}...", flush=True)
     if HuggingFaceEmbeddings is None:
         raise RuntimeError("HuggingFaceEmbeddings is not available in the environment.")
     model = HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
@@ -135,30 +42,11 @@ class FAISSVectorStore(VectorStore):
     Uses faiss.IndexIDMap to wrap IndexFlatIP for exact cosine similarity searches.
     """
     
-    def __init__(self, dimension: Optional[int] = None):
-        print("🔧 [FAISSStore] Inside __init__", flush=True)
-        print("🔧 [FAISSStore] Call get_embeddings_model()", flush=True)
+    def __init__(self, dimension: int = 384):
         self.embeddings = get_embeddings_model()
-        print("🔧 [FAISSStore] get_embeddings_model() completed", flush=True)
-        
-        if dimension is not None:
-            self.dimension = dimension
-        else:
-            print("🔧 [FAISSStore] Detecting embedding dimension dynamically...", flush=True)
-            test_vector = self.embeddings.embed_query("test")
-            self.dimension = len(test_vector)
-            print(f"🔧 [FAISSStore] Dimension detected: {self.dimension}", flush=True)
-            
-        print("🔧 [FAISSStore] Call faiss.IndexFlatIP()", flush=True)
-        flat_index = faiss.IndexFlatIP(self.dimension)
-        print("🔧 [FAISSStore] faiss.IndexFlatIP() completed", flush=True)
-        
-        print("🔧 [FAISSStore] Call faiss.IndexIDMap()", flush=True)
-        self.index = faiss.IndexIDMap(flat_index)
-        print("🔧 [FAISSStore] faiss.IndexIDMap() completed", flush=True)
-        
+        self.dimension = dimension
+        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
         self.docs: Dict[int, Document] = {}
-        print("🔧 [FAISSStore] __init__ completed successfully", flush=True)
 
     def add_documents(self, documents: List[Document]) -> List[int]:
         """

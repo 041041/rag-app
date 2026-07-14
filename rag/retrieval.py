@@ -23,10 +23,11 @@ class VectorStoreRetrieverAdapter(BaseRetriever):
     """
     model_config = {"extra": "allow"}
 
-    def __init__(self, vector_store: VectorStore, k: int = 8):
+    def __init__(self, vector_store: VectorStore, k: int = 8, filter_source: str = None):
         # We call object.__setattr__ because Pydantic-based BaseRetriever might block direct attributes
         object.__setattr__(self, "vector_store", vector_store)
         object.__setattr__(self, "k", k)
+        object.__setattr__(self, "filter_source", filter_source)
         object.__setattr__(self, "tags", [])
         object.__setattr__(self, "metadata", {})
 
@@ -34,8 +35,8 @@ class VectorStoreRetrieverAdapter(BaseRetriever):
         """
         Retrieves relevant documents from local FAISS vector store.
         """
-        logger.info(f"Retrieving relevant documents for query: '{query[:50]}...'")
-        return self.vector_store.search(query, k=self.k)
+        logger.info(f"Retrieving relevant documents for query: '{query[:50]}...' with filter: {self.filter_source}")
+        return self.vector_store.search(query, k=self.k, filter_source=self.filter_source)
 
     async def aget_relevant_documents(self, query: str) -> List[Document]:
         """
@@ -47,5 +48,5 @@ class VectorStoreRetrieverAdapter(BaseRetriever):
         """
         Returns document search results with similarity scores.
         """
-        docs = self.vector_store.search(query, k=self.k)
+        docs = self.vector_store.search(query, k=self.k, filter_source=self.filter_source)
         return [(d, d.metadata.get("score", 1.0)) for d in docs]

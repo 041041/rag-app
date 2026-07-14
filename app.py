@@ -1291,15 +1291,14 @@ if uploaded:
 
 # Optional search filter info (Requirement 5)
 if st.session_state.get("query_filter"):
-    st.markdown(f"""
-    <div style='background-color: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 8px; padding: 10px 15px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;'>
-        <span style='color: #a5f3fc; font-size: 0.9em; font-weight: 600;'>🔍 Active Document Scope: {st.session_state.query_filter}</span>
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("❌ Clear Filter", key="clear_filter_btn"):
-        st.session_state.query_filter = None
-        st.session_state.query_input = ""
-        st.rerun()
+    col_f_badge, col_f_clear = st.columns([5, 1])
+    with col_f_badge:
+        st.info(f"🔍 **Active Document Scope**: `{st.session_state.query_filter}` (Only this document is searched)")
+    with col_f_clear:
+        if st.button("❌ Clear", key="clear_filter_btn", use_container_width=True):
+            st.session_state.query_filter = None
+            st.session_state.query_input = ""
+            st.rerun()
 
 q = st.text_area(
     "Ask anything about your clinical documents...",
@@ -1348,7 +1347,11 @@ if st.button("Ask AI", type="primary", use_container_width=True):
         if st.session_state.vector_store.index.ntotal == 0:
             st.error("❌ Index is empty. Please upload documents in the sidebar first.")
         else:
-            retriever = VectorStoreRetrieverAdapter(st.session_state.vector_store, k=settings.RETRIEVER_K)
+            retriever = VectorStoreRetrieverAdapter(
+                st.session_state.vector_store,
+                k=settings.RETRIEVER_K,
+                filter_source=st.session_state.get("query_filter")
+            )
             try:
                 qa = create_qa_from_retriever(retriever)
             except Exception as e:

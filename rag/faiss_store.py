@@ -159,9 +159,10 @@ class FAISSVectorStore(VectorStore):
             
         return ids
 
-    def search(self, query: str, k: int = 8) -> List[Document]:
+    def search(self, query: str, k: int = 8, filter_source: str = None) -> List[Document]:
         """
         Performs inner product (cosine similarity) search on the normalized vectors.
+        Optionally filters results to a specific source file.
         """
         if not self.docs or self.index.ntotal == 0:
             return []
@@ -174,20 +175,20 @@ class FAISSVectorStore(VectorStore):
         # Normalize query vector
         faiss.normalize_L2(qvec_np)
         
-        # Cap k at current total vectors in index
-        k_search = min(k, self.index.ntotal)
-        if k_search <= 0:
+        # Search index with a higher candidate count if filtering to guarantee enough results
+        fetch_k = min(k * 15 if filter_source else k, self.index.ntotal)
+        if fetch_k <= 0:
             return []
             
-        # Search index
-        scores, indices = self.index.search(qvec_np, k_search)
+        scores, indices = self.index.search(qvec_np, fetch_k)
         
         retrieved_docs = []
         for i, idx in enumerate(indices[0]):
-            # -1 signifies no match/index empty slots
             if idx != -1 and idx in self.docs:
                 doc = self.docs[idx]
-                # Embed the score into metadata if needed, copy to prevent modifying stored doc
+                # Apply hard document source filter
+                if filter_source and doc.metadata.get("source") != filter_source:
+                    continue
                 new_doc = Document(
                     page_content=doc.page_content,
                     metadata=doc.metadata.copy()
@@ -195,7 +196,9 @@ class FAISSVectorStore(VectorStore):
                 new_doc.metadata["score"] = float(scores[0][i])
                 new_doc.metadata["chunk_id"] = int(idx)
                 retrieved_docs.append(new_doc)
-                
+                if len(retrieved_docs) >= k:
+                    break
+                    
         return retrieved_docs
 
     def save(self, folder_path: str) -> None:

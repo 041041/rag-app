@@ -1129,11 +1129,10 @@ st.markdown("""
     }
     div[role="dialog"] h1, div[role="dialog"] h2, div[role="dialog"] h3, div[role="dialog"] h4, 
     div[role="dialog"] p, div[role="dialog"] label, div[role="dialog"] span, div[role="dialog"] div, 
-    div[role="dialog"] small, div[role="dialog"] th, div[role="dialog"] td {
+    div[role="dialog"] small, div[role="dialog"] th, div[role="dialog"] td, div[role="dialog"] summary,
+    div[role="dialog"] summary p, div[role="dialog"] summary span, div[role="dialog"] svg, div[role="dialog"] button {
         color: #f0f3f9 !important;
-    }
-    div[role="dialog"] button {
-        color: white !important;
+        fill: #f0f3f9 !important;
     }
     /* Form inputs inside modal should remain highly readable */
     div[role="dialog"] input, div[role="dialog"] textarea, div[role="dialog"] select {

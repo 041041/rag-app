@@ -17,6 +17,11 @@ import streamlit as st
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("RAGApp.Main")
 
+# Suppress verbose third-party HTTP request logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+
 # Import modular components
 from config import settings
 from storage import r2_storage

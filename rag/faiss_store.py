@@ -28,11 +28,39 @@ def get_embeddings_model():
     """
     Load the HuggingFace embedding model.
     """
-    print(f"🚀 [FAISSStore] Loading HuggingFace embeddings model: {settings.EMBED_MODEL}...", flush=True)
+    import os
+    print(f"🚀 [FAISSStore] Configured EMBED_MODEL setting: {settings.EMBED_MODEL}", flush=True)
+    
+    # 2. Check and print local path existence details
+    local_path = settings.EMBED_MODEL
+    print(f"🚀 [FAISSStore] Checking if local path '{local_path}' exists...", flush=True)
+    exists = os.path.exists(local_path)
+    print(f"🚀 [FAISSStore] os.path.exists('{local_path}'): {exists}", flush=True)
+    
+    if os.path.exists("models"):
+        try:
+            print(f"🚀 [FAISSStore] os.listdir('models'): {os.listdir('models')}", flush=True)
+        except Exception as e:
+            print(f"🚀 [FAISSStore] Failed to list 'models' dir: {e}", flush=True)
+            
+    # 5. Force load using filesystem path. If it does not exist, raise an error to prevent fallback
+    if not exists:
+        raise FileNotFoundError(
+            f"❌ [FAISSStore] Offline model path '{local_path}' not found on container filesystem! "
+            "Preventing silent fallback to Hugging Face Hub."
+        )
+        
+    print(f"🚀 [FAISSStore] Loading HuggingFace embeddings model from local disk path: {local_path}...", flush=True)
     if HuggingFaceEmbeddings is None:
-        raise RuntimeError("HuggingFaceEmbeddings is not available in the environment.")
-    model = HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
-    print("🚀 [FAISSStore] HuggingFace embeddings model loaded successfully.", flush=True)
+        raise RuntimeError("HuggingFaceEmbeddings not available — install langchain-huggingface.")
+        
+    # Instantiate using local filesystem path
+    model = HuggingFaceEmbeddings(
+        model_name=local_path,
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
+    print("🚀 [FAISSStore] HuggingFace embeddings model loaded successfully from local disk.", flush=True)
     return model
 
 class FAISSVectorStore(VectorStore):

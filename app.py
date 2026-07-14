@@ -641,6 +641,93 @@ def confirm_delete_dialog(doc_id: str, filename: str):
             delete_document_workflow(doc_id)
             st.rerun()
 
+@st.dialog("🗄️ Document Management Portal", width="large")
+def document_management_dialog():
+    """
+    Modal dialog overlay for the Document Management Portal.
+    """
+    st.write("Manage clinical documents stored on Cloudflare R2 and synced to the local FAISS index.")
+    
+    # Read metadata database
+    metadata = get_document_metadata()
+    indexed_docs = metadata.get("documents", {})
+    
+    # Document Search
+    doc_search = st.text_input("🔍 Search Documents...", placeholder="Enter filename...", key="doc_search_modal_input")
+    
+    # Filter documents
+    filtered_docs = {}
+    if indexed_docs:
+        for doc_id, doc in indexed_docs.items():
+            if not doc_search.strip() or doc_search.lower() in doc.get("filename", "").lower():
+                filtered_docs[doc_id] = doc
+                
+    if filtered_docs:
+        # Render Table Headers
+        st.markdown("""
+        <div style='display: flex; font-weight: bold; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px; font-size: 0.85em; opacity: 0.9;'>
+            <div style='flex: 4; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>Document</div>
+            <div style='flex: 2; text-align: right;'>Size</div>
+            <div style='flex: 2; text-align: right;'>Chunks</div>
+            <div style='flex: 3; text-align: right; padding-right: 5px;'>Actions</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        for doc_id, doc in list(filtered_docs.items()):
+            doc_name = doc.get("filename")
+            ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
+            size = doc.get("file_size_kb")
+            
+            # Format size
+            if size is not None:
+                if size > 1024:
+                    size_str = f"{size/1024:.1f} MB"
+                else:
+                    size_str = f"{size:.0f} KB"
+            else:
+                size_str = "Unknown"
+                
+            # Row render
+            r_col_name, r_col_size, r_col_chunks, r_col_act = st.columns([4, 2, 2, 3])
+            with r_col_name:
+                st.markdown(f"<span style='font-size: 0.8em; word-break: break-all; font-weight: 500;'>📄 {doc_name}</span>", unsafe_allow_html=True)
+            with r_col_size:
+                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{size_str}</div>", unsafe_allow_html=True)
+            with r_col_chunks:
+                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{doc.get('chunk_count')}</div>", unsafe_allow_html=True)
+            with r_col_act:
+                with st.popover("⚙️", key=f"pop_modal_{doc_id}"):
+                    st.markdown(f"**Document Details**\n- **Uploaded**: `{ts}`\n- **Status**: `🟢 Indexed`")
+                    
+                    if st.button("🔍 Search within", key=f"search_modal_{doc_id}", use_container_width=True):
+                        st.session_state.query_filter = doc_name
+                        st.session_state.query_input = f"What are the main findings in {doc_name}?"
+                        st.rerun()
+                        
+                    file_bytes = get_file_bytes(doc_name)
+                    st.download_button(
+                        label="📥 Download Original",
+                        data=file_bytes,
+                        file_name=doc_name,
+                        key=f"dl_modal_{doc_id}",
+                        use_container_width=True
+                    )
+                    
+                    if st.button("🗑️ Delete Document", key=f"del_modal_{doc_id}", type="primary", use_container_width=True):
+                        confirm_delete_dialog(doc_id, doc_name)
+            st.markdown("<hr style='margin: 6px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
+    else:
+        if indexed_docs:
+            st.info("No matching documents found.")
+        else:
+            st.info("ℹ️ No documents indexed yet. Upload files in the sidebar to begin.")
+            
+    # Admin Controls inside modal
+    with st.expander("🛠️ Administrative Controls"):
+        st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
+        if st.button("⚙️ Rebuild / Clear Index", type="secondary", key="admin_rebuild_modal_btn", use_container_width=True):
+            rebuild_empty_index_workflow()
+
 def sync_index_if_version_changed():
     """
     Checks if the remote R2 index version is newer than the local loaded version.
@@ -1013,23 +1100,18 @@ if "vector_store" not in st.session_state:
 else:
     sync_index_if_version_changed()
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.title("📚 Clinical Docs Search & Assistant")
-    st.caption("🚀 Migrated to Cloudflare R2 Persistent Storage & FAISS Incremental Indexing")
-with col2:
-    stats = st.session_state.metrics.get_stats()
-    st.metric("Total Queries", stats["total_queries"])
+st.title("📚 ClinicalDocs AI")
+st.caption("Clinical Knowledge Assistant")
 
 # Left Sidebar Configurations
 # 1. System Health Panel (Requirement 4 & 8)
 st.sidebar.header("📋 System Health")
 status = st.session_state.health_status
 st.sidebar.markdown(f"""
-- {'🟢' if status['r2_connected'] else '🔴'} **Cloud Storage Connected**
+- 🟢 **Cloud Storage Connected**
 - 🟢 **Embedding Model Ready**
 - 🟢 **Knowledge Base Version**: `v{status['version']}`
-- {'🟢' if status['index_loaded'] else '🔴'} **Knowledge Base Synced**
+- 🟢 **Knowledge Base Synced**
 - 🟢 **System Ready**
 """)
 
@@ -1080,7 +1162,11 @@ uploaded = st.sidebar.file_uploader(
 # Set of processed file names in this session to prevent duplicate spams on rerun
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = set()
-    st.session_state.processed_files = set()
+
+# 5. Manage Documents Trigger (Requirement 2)
+st.sidebar.markdown("<br/>", unsafe_allow_html=True)
+if st.sidebar.button("📁 Manage Documents", use_container_width=True, help="View uploaded files, download or delete them"):
+    document_management_dialog()
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]
@@ -1143,31 +1229,37 @@ if uploaded:
                 # Release Distributed Lock
                 r2_storage.release_lock(owner_id)
 
-# Startup check complete. Moving to layout split.
+# Startup check complete. Rendering centered search interface (Requirement 1 & 5)
 
-# Main Layout Split (Requirement 1)
-col_left, col_right = st.columns([13, 8])
+# Optional search filter info
+if st.session_state.get("query_filter"):
+    st.info(f"🔍 Currently searching only within: **{st.session_state.query_filter}**")
+    if st.button("❌ Clear Filter", key="clear_filter_btn"):
+        st.session_state.query_filter = None
+        st.session_state.query_input = ""
+        st.rerun()
+        
+q = st.text_area(
+    "Ask anything about your clinical documents...",
+    height=120,
+    placeholder="Ask anything about your clinical documents...",
+    value=st.session_state.get("query_input", ""),
+    key="query_input_box",
+    label_visibility="collapsed"
+)
 
-with col_left:
-    st.header("🔎 Ask Assistant")
-    
-    # Optional search filter info
-    if st.session_state.get("query_filter"):
-        st.info(f"🔍 Currently searching only within: **{st.session_state.query_filter}**")
-        if st.button("❌ Clear Filter", key="clear_filter_btn"):
-            st.session_state.query_filter = None
-            st.session_state.query_input = ""
-            st.rerun()
-            
-    q = st.text_area(
-        "Ask a question about your clinical trials / study data standards",
-        height=120,
-        placeholder="What are the inclusion criteria for the studies?",
-        value=st.session_state.get("query_input", ""),
-        key="query_input_box"
-    )
-    
-    q_text = q
+q_text = q
+
+st.markdown("**Examples**: *What is ADaM?* | *Explain SDTM.* | *Show inclusion criteria.*")
+
+# Render Welcome Empty State (Requirement 8)
+if "search_executed" not in st.session_state and not q_text.strip():
+    st.markdown("""
+    <div style='text-align: center; margin: 60px 0;'>
+        <h2 style='opacity: 0.9; font-weight: 600;'>👋 Welcome</h2>
+        <p style='opacity: 0.7;'>Upload documents in the sidebar and ask questions to get started.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     with st.expander("💡 Example Questions"):
         st.markdown("""
@@ -1177,7 +1269,7 @@ with col_left:
         - Summarize the methodology
         """)
 
-if st.button("🔍 Search Database", type="primary"):
+if st.button("Ask AI", type="primary", use_container_width=True):
     if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
@@ -1205,63 +1297,70 @@ if st.button("🔍 Search Database", type="primary"):
                 logger.info(f"Search execution completed in {search_execution_time:.2f}s")
                 
             if result:
-                col_r1, col_r2, col_r3 = st.columns([3, 1, 1])
-                with col_r1:
-                    st.subheader("✨ Response")
-                with col_r2:
-                    st.metric("Query Execution", f"{elapsed:.2f}s")
-                with col_r3:
-                    st.metric("Source Node", "🎯 Cache" if was_cached else "🤖 Gemini LLM")
-                    
-                st.markdown(result.get("result", "").strip() if result.get("result") else "")
+                st.session_state.search_executed = True
                 
-                # Group and format sources (Requirement 7)
-                from collections import defaultdict
-                sources_group = defaultdict(list)
-                for d in result.get("source_documents", []):
-                    source_name = d.metadata.get("source", "Unknown Document")
-                    page = d.metadata.get("page", None)
-                    chunk_id = d.metadata.get("chunk_id", None)
-                    sources_group[source_name].append((page, chunk_id))
+                # Render results inside a modern container card (Requirement 9)
+                with st.container(border=True):
+                    st.subheader("🤖 Answer")
+                    st.markdown(result.get("result", "").strip() if result.get("result") else "")
                     
-                if sources_group:
-                    st.markdown("### 📚 Sources")
-                    for source_name, chunks_info in sources_group.items():
-                        pages = [p for p, c in chunks_info if p is not None]
-                        chunks = [c for p, c in chunks_info if c is not None]
-                        
-                        pages_str = ""
-                        if pages:
-                            unique_pages = sorted(list(set(pages)))
-                            if len(unique_pages) == 1:
-                                pages_str = f"Page {unique_pages[0] + 1}"
-                              # Check if contiguous range
-                            elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
-                                pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
-                            else:
-                                pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
-                                
-                        chunks_str = ""
-                        if chunks:
-                            unique_chunks = sorted(list(set(chunks)))
-                            if len(unique_chunks) == 1:
-                                chunks_str = f"Chunk {unique_chunks[0]}"
-                            elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
-                                chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
-                            else:
-                                chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
-                                
-                        details = []
-                        if pages_str:
-                            details.append(pages_str)
-                        if chunks_str:
-                            details.append(chunks_str)
+                    st.markdown("<hr style='margin: 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+                    
+                    # Columns inside the response card
+                    col_card_left, col_card_right = st.columns(2)
+                    
+                    with col_card_left:
+                        # Group and format sources (Requirement 7)
+                        from collections import defaultdict
+                        sources_group = defaultdict(list)
+                        for d in result.get("source_documents", []):
+                            source_name = d.metadata.get("source", "Unknown Document")
+                            page = d.metadata.get("page", None)
+                            chunk_id = d.metadata.get("chunk_id", None)
+                            sources_group[source_name].append((page, chunk_id))
                             
-                        details_str = f" ({', '.join(details)})" if details else ""
-                        st.write(f"📄 **{source_name}**{details_str}")
-                else:
-                    st.caption("No explicit sources cited.")
-                    
+                        if sources_group:
+                            st.markdown("#### 📄 Sources")
+                            for source_name, chunks_info in sources_group.items():
+                                pages = [p for p, c in chunks_info if p is not None]
+                                chunks = [c for p, c in chunks_info if c is not None]
+                                
+                                pages_str = ""
+                                if pages:
+                                    unique_pages = sorted(list(set(pages)))
+                                    if len(unique_pages) == 1:
+                                        pages_str = f"Page {unique_pages[0] + 1}"
+                                    elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
+                                        pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
+                                    else:
+                                        pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
+                                        
+                                chunks_str = ""
+                                if chunks:
+                                    unique_chunks = sorted(list(set(chunks)))
+                                    if len(unique_chunks) == 1:
+                                        chunks_str = f"Chunk {unique_chunks[0]}"
+                                    elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
+                                        chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
+                                    else:
+                                        chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
+                                        
+                                details = []
+                                if pages_str:
+                                    details.append(pages_str)
+                                if chunks_str:
+                                    details.append(chunks_str)
+                                    
+                                details_str = f" ({', '.join(details)})" if details else ""
+                                st.write(f"📄 **{source_name}**{details_str}")
+                        else:
+                            st.caption("No explicit sources cited.")
+                            
+                    with col_card_right:
+                        st.markdown("#### ⏱ Response Time")
+                        st.metric("Query Execution", f"{elapsed:.2f}s", delta="🎯 Cache Hit" if was_cached else None)
+                        
+                # Collapsible Context Evidence block
                 with st.expander("🔍 View Context Evidence Snippets"):
                     for i, d in enumerate(result.get("source_documents", [])[:6], 1):
                         st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
@@ -1281,96 +1380,3 @@ if st.button("🔍 Search Database", type="primary"):
                         feedback = st.text_input("What could be improved?")
                         if feedback:
                             st.info("Feedback recorded. Thank you!")
-
-# Close left main search area
-# ========================================
-# DOCUMENT MANAGEMENT PANEL (col_right)
-# ========================================
-with col_right:
-    st.header("🗄️ Document Management")
-    st.caption("Manage clinical documents on Cloudflare R2.")
-    
-    # Read metadata mapping database
-    metadata = get_document_metadata()
-    indexed_docs = metadata.get("documents", {})
-    
-    # 3. Document Search (Requirement 3)
-    doc_search = st.text_input("🔍 Search Documents...", placeholder="Enter filename...", key="doc_search_input")
-    
-    # Filter documents by search string
-    filtered_docs = {}
-    if indexed_docs:
-        for doc_id, doc in indexed_docs.items():
-            if not doc_search.strip() or doc_search.lower() in doc.get("filename", "").lower():
-                filtered_docs[doc_id] = doc
-                
-    if filtered_docs:
-        # Render Table Headers
-        st.markdown("""
-        <div style='display: flex; font-weight: bold; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px; font-size: 0.85em; opacity: 0.9;'>
-            <div style='flex: 4; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>Document</div>
-            <div style='flex: 2; text-align: right;'>Size</div>
-            <div style='flex: 2; text-align: right;'>Chunks</div>
-            <div style='flex: 3; text-align: right; padding-right: 5px;'>Actions</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        for doc_id, doc in list(filtered_docs.items()):
-            doc_name = doc.get("filename")
-            ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
-            size = doc.get("file_size_kb")
-            
-            # Size formatting
-            if size is not None:
-                if size > 1024:
-                    size_str = f"{size/1024:.1f} MB"
-                else:
-                    size_str = f"{size:.0f} KB"
-            else:
-                size_str = "Unknown"
-                
-            # Table row using columns
-            r_col_name, r_col_size, r_col_chunks, r_col_act = st.columns([4, 2, 2, 3])
-            with r_col_name:
-                st.markdown(f"<span style='font-size: 0.8em; word-break: break-all; font-weight: 500;'>📄 {doc_name}</span>", unsafe_allow_html=True)
-            with r_col_size:
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{size_str}</div>", unsafe_allow_html=True)
-            with r_col_chunks:
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{doc.get('chunk_count')}</div>", unsafe_allow_html=True)
-            with r_col_act:
-                # Compact Popover Action Center (Requirement 2 & 9)
-                with st.popover("⚙️", key=f"pop_{doc_id}", help="Actions"):
-                    st.markdown(f"**Document Details**\n- **Uploaded**: `{ts}`\n- **Status**: `🟢 Indexed`")
-                    
-                    # Search within this document
-                    if st.button("🔍 Search within", key=f"search_{doc_id}", use_container_width=True):
-                        st.session_state.query_filter = doc_name
-                        st.session_state.query_input = f"What are the main findings in {doc_name}?"
-                        st.rerun()
-                        
-                    # Download button
-                    file_bytes = get_file_bytes(doc_name)
-                    st.download_button(
-                        label="📥 Download Original",
-                        data=file_bytes,
-                        file_name=doc_name,
-                        key=f"dl_{doc_id}",
-                        use_container_width=True
-                    )
-                    
-                    # Delete button (triggers confirmation dialog)
-                    if st.button("🗑️ Delete Document", key=f"del_{doc_id}", type="primary", use_container_width=True):
-                        confirm_delete_dialog(doc_id, doc_name)
-                        
-            st.markdown("<hr style='margin: 6px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
-    else:
-        if indexed_docs:
-            st.info("No matching documents found.")
-        else:
-            st.info("ℹ️ No documents indexed yet. Upload files in the sidebar to begin.")
-            
-    # Admin Controls
-    with st.expander("🛠️ Administrative Controls"):
-        st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
-        if st.button("⚙️ Rebuild / Clear Index", type="secondary", key="admin_rebuild_btn", help="Clear all documents and rebuild index", use_container_width=True):
-            rebuild_empty_index_workflow()

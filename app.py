@@ -30,6 +30,10 @@ from rag.faiss_store import FAISSVectorStore
 from rag.retrieval import VectorStoreRetrieverAdapter
 from rag.indexing import process_and_index_file, get_document_metadata, save_document_metadata
 
+# Map GEMINI_API_KEY to GOOGLE_API_KEY if needed (LangChain defaults to GOOGLE_API_KEY)
+if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
+
 # Ensure an asyncio event loop exists for the current thread (Streamlit-related fix)
 def ensure_event_loop():
     try:
@@ -778,7 +782,7 @@ if st.button("🔍 Search Database", type="primary"):
     if not q.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY"):
-        st.error("❌ Missing GOOGLE_API_KEY environment variable. Please set it to connect to Gemini LLM.")
+        st.error("❌ Missing GOOGLE_API_KEY or GEMINI_API_KEY environment variable. Please set it in Streamlit secrets.")
     else:
         # Check if local index has vectors
         if st.session_state.vector_store.index.ntotal == 0:

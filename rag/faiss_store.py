@@ -24,10 +24,32 @@ except ImportError:
     except ImportError:
         HuggingFaceEmbeddings = None
 
-try:
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-except ImportError:
-    GoogleGenerativeAIEmbeddings = None
+from langchain_core.embeddings import Embeddings
+
+class GoogleGenAIEmbeddings(Embeddings):
+    """
+    Custom LangChain Embeddings class wrapping the modern google-genai SDK.
+    Bypasses legacy REST and model-prefix translation layers.
+    """
+    def __init__(self, model: str = "text-embedding-004", google_api_key: Optional[str] = None):
+        from google import genai
+        api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
+        self.client = genai.Client(api_key=api_key)
+        self.model = model
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        response = self.client.models.embed_content(
+            model=self.model,
+            contents=texts
+        )
+        return [emb.values for emb in response.embeddings]
+
+    def embed_query(self, text: str) -> List[float]:
+        response = self.client.models.embed_content(
+            model=self.model,
+            contents=text
+        )
+        return response.embeddings[0].values
 
 @lru_cache(maxsize=1)
 def get_embeddings_model():
@@ -36,10 +58,10 @@ def get_embeddings_model():
     """
     # Prefer Google Gemini Embeddings (runs via API, bypassing PyTorch segfaults on Python 3.14)
     google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if google_key and GoogleGenerativeAIEmbeddings is not None:
-        print("🚀 [FAISSStore] Using Google Gemini text-embedding-004 (Cloud API Mode)...", flush=True)
+    if google_key:
+        print("🚀 [FAISSStore] Using Google Gemini text-embedding-004 (Cloud API Mode via native google-genai)...", flush=True)
         try:
-            model = GoogleGenerativeAIEmbeddings(model="text-embedding-004", google_api_key=google_key)
+            model = GoogleGenAIEmbeddings(model="text-embedding-004", google_api_key=google_key)
             # Test it immediately
             model.embed_query("test")
             print("🚀 [FAISSStore] Google Gemini embeddings initialized and verified successfully.", flush=True)

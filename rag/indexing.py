@@ -30,7 +30,7 @@ try:
         TextLoader,
         CSVLoader,
         Docx2txtLoader,
-        UnstructuredHTMLLoader,
+        BSHTMLLoader,
     )
 except ImportError:
     try:
@@ -39,10 +39,10 @@ except ImportError:
             TextLoader,
             CSVLoader,
             Docx2txtLoader,
-            UnstructuredHTMLLoader,
+            BSHTMLLoader,
         )
     except ImportError:
-        PyPDFLoader = TextLoader = CSVLoader = Docx2txtLoader = UnstructuredHTMLLoader = None
+        PyPDFLoader = TextLoader = CSVLoader = Docx2txtLoader = BSHTMLLoader = None
 
 def _get_loader_for_path(fp: Path):
     ext = fp.suffix.lower()
@@ -55,7 +55,7 @@ def _get_loader_for_path(fp: Path):
     if ext == ".docx":
         return Docx2txtLoader
     if ext in [".html", ".htm"]:
-        return UnstructuredHTMLLoader
+        return BSHTMLLoader
     return None
 
 def compute_file_hash(file_bytes: bytes) -> str:

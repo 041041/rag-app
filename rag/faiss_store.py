@@ -36,8 +36,46 @@ class GoogleGenAIEmbeddings(Embeddings):
         api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
         self.client = genai.Client(api_key=api_key)
         self.model = model
+        
+        # 1. Query the SDK to list available models for the current API key
+        print("🚀 [STARTUP LOG] Querying Google GenAI SDK for available models list...", flush=True)
+        available_models = []
+        try:
+            model_list = self.client.models.list()
+            for m in model_list:
+                # 2. Identify models that support embeddings (checking supported_methods / supportedMethods)
+                methods = getattr(m, 'supported_methods', None) or getattr(m, 'supportedMethods', None) or []
+                if 'embedContent' in methods or any('embed' in method.lower() for method in methods):
+                    available_models.append(m.name)
+            print(f"🚀 [STARTUP LOG] All supported embedding models for this API key: {available_models}", flush=True)
+        except Exception as e:
+            print(f"🚀 [STARTUP LOG] Failed to query models list from SDK: {e}", flush=True)
+
+        # 5. Verify whether this API key supports the requested model
+        supported_model = None
+        for m_name in available_models:
+            # Check exact match or basename match
+            if m_name == self.model or m_name.split('/')[-1] == self.model.split('/')[-1]:
+                supported_model = m_name
+                break
+                
+        if supported_model:
+            print(f"🚀 [STARTUP LOG] Verified requested model '{self.model}' is available on this API key.", flush=True)
+            self.model = supported_model
+        else:
+            print(f"🚀 [STARTUP LOG] Requested embedding model '{self.model}' is NOT supported or not found for this API key.", flush=True)
+            # 6. Automatically use the first supported embedding model returned by the SDK
+            if available_models:
+                self.model = available_models[0]
+                print(f"🚀 [STARTUP LOG] Falling back dynamically to first supported model: '{self.model}'", flush=True)
+            else:
+                print(f"🚀 [STARTUP LOG] No supported embedding models found. Keeping default: '{self.model}'", flush=True)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # 3. Print the exact request details and 4. Print endpoint URL
+        print(f"🚀 [EMBED REQUEST] API Endpoint: https://generativelanguage.googleapis.com/v1beta", flush=True)
+        print(f"🚀 [EMBED REQUEST] Method: Client.models.embed_content. Model: '{self.model}'", flush=True)
+        print(f"🚀 [EMBED REQUEST] Parameters: Batch of {len(texts)} chunks", flush=True)
         response = self.client.models.embed_content(
             model=self.model,
             contents=texts
@@ -45,6 +83,10 @@ class GoogleGenAIEmbeddings(Embeddings):
         return [emb.values for emb in response.embeddings]
 
     def embed_query(self, text: str) -> List[float]:
+        # 3. Print the exact request details and 4. Print endpoint URL
+        print(f"🚀 [EMBED REQUEST] API Endpoint: https://generativelanguage.googleapis.com/v1beta", flush=True)
+        print(f"🚀 [EMBED REQUEST] Method: Client.models.embed_content. Model: '{self.model}'", flush=True)
+        print(f"🚀 [EMBED REQUEST] Parameters: Single query", flush=True)
         response = self.client.models.embed_content(
             model=self.model,
             contents=text

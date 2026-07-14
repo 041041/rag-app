@@ -1276,6 +1276,17 @@ if st.session_state.get("query_filter"):
         st.session_state.query_input = ""
         st.rerun()
 
+q = st.text_area(
+    "Ask anything about your clinical documents...",
+    height=120,
+    placeholder="Ask anything about your clinical documents...",
+    value=st.session_state.get("query_input", ""),
+    key="query_input_box",
+    label_visibility="collapsed"
+)
+
+q_text = q
+
 # Clickable Chips for Example Questions (Requirement 6)
 st.markdown("<p style='font-size: 0.85em; opacity: 0.85; margin-bottom: 5px; font-weight: 600;'>💡 Try asking:</p>", unsafe_allow_html=True)
 col_chip1, col_chip2, col_chip3 = st.columns([1, 1, 1])

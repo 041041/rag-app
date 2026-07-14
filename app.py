@@ -1218,15 +1218,15 @@ if last_sync_raw != "Never" and len(last_sync_raw) > 16:
 else:
     last_sync_str = last_sync_raw
 
-st.sidebar.markdown("### 📊 Stats")
-st.sidebar.markdown(f"""
-<div style='font-size: 0.85em; line-height: 1.5; opacity: 0.9;'>
-    📁 Docs: <strong>{total_docs}</strong> | 🧩 Chunks: <strong>{total_chunks:,}</strong><br/>
-    💾 Size: <strong>{total_size_mb:.2f} MB</strong> | 🏷️ Version: <strong>v{status['version']}</strong><br/>
-    ⏱️ Sync: <strong>{last_sync_str}</strong><br/>
-    🤖 Model: <code>all-MiniLM-L6-v2</code>
-</div>
-""", unsafe_allow_html=True)
+with st.sidebar.expander("📊 Knowledge Base Stats", expanded=False):
+    st.markdown(f"""
+    <div style='font-size: 0.85em; line-height: 1.5; opacity: 0.9;'>
+        📁 Docs: <strong>{total_docs}</strong> | 🧩 Chunks: <strong>{total_chunks:,}</strong><br/>
+        💾 Size: <strong>{total_size_mb:.2f} MB</strong> | 🏷️ Version: <strong>v{status['version']}</strong><br/>
+        ⏱️ Sync: <strong>{last_sync_str}</strong><br/>
+        🤖 Model: <code>all-MiniLM-L6-v2</code>
+    </div>
+    """, unsafe_allow_html=True)
 
 # 3. Connection & Sync state (Requirement 6)
 st.sidebar.caption(f"✓ Synced ({last_sync_str})")
@@ -1326,7 +1326,7 @@ if st.session_state.get("query_filter"):
 
 q = st.text_area(
     "Ask anything about your clinical documents...",
-    height=180,
+    height=110,
     placeholder="Ask anything about your clinical documents...",
     value=st.session_state.get("query_input", ""),
     key="query_input_box",
@@ -1339,15 +1339,15 @@ q_text = q
 st.markdown("<p style='font-size: 0.85em; opacity: 0.85; margin-bottom: 5px; font-weight: 600;'>💡 Try asking:</p>", unsafe_allow_html=True)
 col_chip1, col_chip2, col_chip3 = st.columns([1, 1, 1])
 with col_chip1:
-    if st.button("🏷️ What is ADaM?", key="chip_adam", use_container_width=True):
+    if st.button("🏷 ADaM", key="chip_adam", use_container_width=True):
         st.session_state.query_input = "What is ADaM?"
         st.rerun()
 with col_chip2:
-    if st.button("🏷️ Explain SDTM.", key="chip_sdtm", use_container_width=True):
+    if st.button("🏷 SDTM", key="chip_sdtm", use_container_width=True):
         st.session_state.query_input = "Explain SDTM."
         st.rerun()
 with col_chip3:
-    if st.button("🏷️ Show inclusion criteria.", key="chip_criteria", use_container_width=True):
+    if st.button("🏷 Inclusion Criteria", key="chip_criteria", use_container_width=True):
         st.session_state.query_input = "Show inclusion criteria."
         st.rerun()
 
@@ -1409,27 +1409,9 @@ if st.session_state.get("query_input"):
     </script>
     """, unsafe_allow_html=True)
 
-# Render Welcome Empty State (Requirement 2)
-if not st.session_state.search_executed and not q_text.strip():
-    if total_docs > 0:
-        st.markdown(f"""
-        <div style='text-align: center; margin: 40px 0; background-color: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 25px;'>
-            <h2 style='opacity: 0.95; font-weight: 600; color: #a5f3fc; margin-bottom: 10px;'>📚 Knowledge Base Ready</h2>
-            <p style='font-size: 1.15em; margin: 5px 0; font-weight: 500;'><strong>{total_docs}</strong> Documents Indexed &nbsp;|&nbsp; <strong>{total_chunks:,}</strong> Chunks Available</p>
-            <p style='opacity: 0.7; font-size: 0.95em;'>Ask any question about your uploaded clinical documents.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div style='text-align: center; margin: 40px 0; background-color: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 25px;'>
-            <h2 style='opacity: 0.95; font-weight: 600; color: #cbd5e1; margin-bottom: 10px;'>📂 No documents uploaded yet</h2>
-            <p style='opacity: 0.7; font-size: 0.95em;'>Upload documents from the sidebar to start building your knowledge base.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
 # Primary action button rendering (Requirement 1 & 4)
 btn_label = "⏳ Generating Answer..." if st.session_state.searching else "✨ Ask AI"
-if st.button(btn_label, type="primary", use_container_width=True, disabled=st.session_state.searching, key="primary_ask_ai_btn"):
+if st.button(btn_label, type="primary", use_container_width=False, disabled=st.session_state.searching, key="primary_ask_ai_btn"):
     if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):

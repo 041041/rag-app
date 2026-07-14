@@ -1,8 +1,9 @@
 # rag/faiss_store.py
+import os
 import pickle
 import logging
 from pathlib import Path
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import faiss
 
@@ -23,16 +24,27 @@ except ImportError:
     except ImportError:
         HuggingFaceEmbeddings = None
 
+try:
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+except ImportError:
+    GoogleGenerativeAIEmbeddings = None
+
 @lru_cache(maxsize=1)
 def get_embeddings_model():
     """
-    Load the HuggingFace embedding model.
+    Load the appropriate embedding model based on credentials.
     """
-    print("Loading HuggingFace embeddings model (all-MiniLM-L6-v2)...", flush=True)
+    # Prefer Google Gemini Embeddings (runs via API, bypassing PyTorch segfaults on Python 3.14)
+    google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if google_key and GoogleGenerativeAIEmbeddings is not None:
+        print("🚀 [FAISSStore] Using Google Gemini text-embedding-004 (Cloud API Mode)...", flush=True)
+        return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=google_key)
+        
+    print("🚀 [FAISSStore] Loading HuggingFace embeddings model (all-MiniLM-L6-v2) (Local CPU Mode)...", flush=True)
     if HuggingFaceEmbeddings is None:
         raise RuntimeError("HuggingFaceEmbeddings is not available in the environment.")
     model = HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
-    print("HuggingFace embeddings model loaded successfully.", flush=True)
+    print("🚀 [FAISSStore] HuggingFace embeddings model loaded successfully.", flush=True)
     return model
 
 class FAISSVectorStore(VectorStore):
@@ -41,14 +53,20 @@ class FAISSVectorStore(VectorStore):
     Uses faiss.IndexIDMap to wrap IndexFlatIP for exact cosine similarity searches.
     """
     
-    def __init__(self, dimension: int = 384):
+    def __init__(self, dimension: Optional[int] = None):
         print("🔧 [FAISSStore] Inside __init__", flush=True)
-        self.dimension = dimension
-        
         print("🔧 [FAISSStore] Call get_embeddings_model()", flush=True)
         self.embeddings = get_embeddings_model()
         print("🔧 [FAISSStore] get_embeddings_model() completed", flush=True)
         
+        if dimension is not None:
+            self.dimension = dimension
+        else:
+            print("🔧 [FAISSStore] Detecting embedding dimension dynamically...", flush=True)
+            test_vector = self.embeddings.embed_query("test")
+            self.dimension = len(test_vector)
+            print(f"🔧 [FAISSStore] Dimension detected: {self.dimension}", flush=True)
+            
         print("🔧 [FAISSStore] Call faiss.IndexFlatIP()", flush=True)
         flat_index = faiss.IndexFlatIP(self.dimension)
         print("🔧 [FAISSStore] faiss.IndexFlatIP() completed", flush=True)

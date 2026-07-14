@@ -623,10 +623,9 @@ st.markdown("""
     /* Styling headers & cards */
     .stApp {
         background: radial-gradient(circle at 10% 20%, rgb(18, 25, 41) 0%, rgb(10, 12, 18) 90%);
-        color: #f0f3f9;
     }
-    .css-1d391kg {
-        background-color: rgba(18, 22, 33, 0.9) !important;
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label {
+        color: #f0f3f9 !important;
     }
     h1 {
         background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);

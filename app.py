@@ -517,7 +517,15 @@ def initialize_app():
         }
         
         # Initialize default vector store structure
-        print("🚀 [STARTUP] Loading FAISSVectorStore and HuggingFace Embeddings...", flush=True)
+        print("🚀 [STARTUP] Testing FAISS instantiation...", flush=True)
+        import faiss
+        test_index = faiss.IndexFlatIP(384)
+        print("🚀 [STARTUP] FAISS test passed! Testing HuggingFaceEmbeddings...", flush=True)
+        
+        from langchain_huggingface import HuggingFaceEmbeddings
+        test_embed = HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
+        print("🚀 [STARTUP] HuggingFaceEmbeddings test passed! Loading FAISSVectorStore...", flush=True)
+        
         store = FAISSVectorStore()
         print("🚀 [STARTUP] FAISSVectorStore initialized. Verifying Cloudflare R2 connection...", flush=True)
         

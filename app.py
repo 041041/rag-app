@@ -624,6 +624,9 @@ st.markdown("""
     .stApp {
         background: radial-gradient(circle at 10% 20%, rgb(18, 25, 41) 0%, rgb(10, 12, 18) 90%);
     }
+    header, [data-testid="stHeader"] {
+        background: transparent !important;
+    }
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgb(15, 23, 42) 0%, rgb(10, 12, 18) 100%) !important;
     }

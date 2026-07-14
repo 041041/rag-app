@@ -269,3 +269,18 @@ def release_lock(owner_id: str) -> bool:
             pass
             
     return released_r2
+
+def delete_file(r2_key: str) -> bool:
+    """
+    Deletes a file key from the Cloudflare R2 bucket.
+    """
+    logger.info(f"Deleting R2 key: {r2_key}...")
+    try:
+        client = get_r2_client()
+        client.delete_object(Bucket=settings.R2_BUCKET_NAME, Key=r2_key)
+        logger.info(f"Successfully deleted {r2_key} from R2.")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete {r2_key} from R2: {e}")
+        return False
+

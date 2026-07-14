@@ -196,7 +196,8 @@ def process_and_index_file(
             "timestamp": datetime.now().isoformat(),
             "r2_path": r2_key,
             "chunk_count": len(chunks),
-            "chunk_ids": chunk_ids
+            "chunk_ids": chunk_ids,
+            "file_size_kb": len(file_bytes) / 1024
         }
         metadata["version"] = new_version
         metadata["last_updated"] = datetime.now().isoformat()

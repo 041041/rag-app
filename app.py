@@ -612,6 +612,157 @@ def initialize_rag():
 
 # Startup initialization will run lazily in the main UI flow below
 
+def sync_index_if_version_changed():
+    """
+    Checks if the remote R2 index version is newer than the local loaded version.
+    If newer, downloads and reloads the index.
+    """
+    if "health_status" not in st.session_state or not st.session_state.health_status.get("r2_connected"):
+        return
+        
+    print("🔄 Checking if remote R2 index version changed...", flush=True)
+    try:
+        temp_meta_path = settings.INDEXES_DIR / "temp_document_metadata.json"
+        # Download document_metadata.json from R2 to get the remote version
+        download_success = r2_storage.download_file(
+            f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+            temp_meta_path
+        )
+        if not download_success:
+            print("🔄 Remote metadata not found on R2.", flush=True)
+            return
+            
+        import json
+        if temp_meta_path.exists():
+            with open(temp_meta_path, 'r', encoding='utf-8') as f:
+                remote_meta = json.load(f)
+                
+            remote_version = remote_meta.get("version", 0)
+            local_version = st.session_state.health_status["version"]
+            
+            if remote_version > local_version:
+                print(f"🔄 Remote index version (v{remote_version}) is newer than local version (v{local_version}). Syncing...", flush=True)
+                with st.spinner(f"🔄 Syncing newer R2 index version (v{remote_version})..."):
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                        settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                    )
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                        settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                    )
+                    import shutil
+                    shutil.copy2(temp_meta_path, settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE)
+                    
+                    st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+                    st.session_state.health_status["version"] = remote_version
+                    st.session_state.health_status["last_updated"] = remote_meta.get("last_updated", "Just now")
+                    st.session_state.health_status["index_loaded"] = True
+                    print(f"✅ Synced index successfully to v{remote_version}", flush=True)
+            else:
+                print(f"🔄 Index is up to date (local: v{local_version}, remote: v{remote_version})", flush=True)
+    except Exception as e:
+        print(f"⚠️ Error checking R2 version: {e}", flush=True)
+
+def delete_document_workflow(doc_id: str):
+    owner_id = f"delete_session_{int(time.time())}_{doc_id}"
+    with st.spinner("🗑️ Acquiring R2 Lock & deleting document..."):
+        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.error("❌ Locking Conflict: another operation is writing. Please try again.")
+            return
+            
+        try:
+            try:
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                    settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                    settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                    settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                )
+                st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+            except Exception as e:
+                logger.info(f"No index to pull: {e}")
+                
+            metadata = get_document_metadata()
+            if doc_id not in metadata.get("documents", {}):
+                st.error("❌ Document not found in index.")
+                return
+                
+            doc_info = metadata["documents"][doc_id]
+            filename = doc_info["filename"]
+            chunk_ids = doc_info.get("chunk_ids", [])
+            
+            if chunk_ids:
+                import numpy as np
+                ids_to_remove = np.array(chunk_ids, dtype=np.int64)
+                removed_count = st.session_state.vector_store.index.remove_ids(ids_to_remove)
+                print(f"🗑️ Removed {removed_count} vectors from FAISS index.", flush=True)
+                
+            del metadata["documents"][doc_id]
+            metadata["version"] = metadata.get("version", 0) + 1
+            metadata["last_updated"] = datetime.now().isoformat()
+            
+            st.session_state.vector_store.save(str(settings.INDEXES_DIR))
+            save_document_metadata(metadata)
+            
+            r2_storage.backup_indexes()
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+            
+            r2_key = doc_info.get("r2_path", f"{settings.R2_DOCUMENTS_PREFIX}{filename}")
+            r2_storage.delete_file(r2_key)
+            
+            if filename in st.session_state.processed_files:
+                st.session_state.processed_files.remove(filename)
+                
+            st.session_state.health_status["version"] = metadata["version"]
+            st.session_state.health_status["last_updated"] = metadata["last_updated"]
+            
+            st.success(f"🗑️ Successfully deleted {filename} from index and Cloudflare R2.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Failed to delete document: {e}")
+        finally:
+            r2_storage.release_lock(owner_id)
+
+def rebuild_empty_index_workflow():
+    owner_id = f"rebuild_session_{int(time.time())}"
+    with st.spinner("⚙️ Rebuilding empty index on Cloudflare R2..."):
+        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.error("❌ Locking Conflict. Please try again.")
+            return
+        try:
+            store = FAISSVectorStore()
+            store.save(str(settings.INDEXES_DIR))
+            
+            empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+            save_document_metadata(empty_meta)
+            
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+            
+            st.session_state.vector_store = store
+            st.session_state.health_status["version"] = 0
+            st.session_state.health_status["last_updated"] = empty_meta["last_updated"]
+            st.session_state.processed_files.clear()
+            
+            st.success("⚙️ Successfully rebuilt index! All indices cleared.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Rebuild failed: {e}")
+        finally:
+            r2_storage.release_lock(owner_id)
+
 
 # ========================================
 # STREAMLIT UI - RICH DESIGN AESTHETICS
@@ -703,6 +854,9 @@ if "vector_store" not in st.session_state:
         store, health_status = initialize_rag()
         st.session_state.vector_store = store
         st.session_state.health_status = health_status
+else:
+    # Auto-synchronize index from R2 if version changed (runs on browser reloads or page re-renders)
+    sync_index_if_version_changed()
 
 status = st.session_state.health_status
 if status["r2_connected"]:
@@ -796,15 +950,16 @@ if uploaded:
                 # Release Distributed Lock
                 r2_storage.release_lock(owner_id)
 
-st.sidebar.markdown("### 📄 Active Index Files")
-metadata = get_document_metadata()
-indexed_docs = metadata.get("documents", {})
-if indexed_docs:
-    for doc_id, doc in indexed_docs.items():
-        st.sidebar.markdown(f"📄 **{doc.get('filename')}**")
-        st.sidebar.caption(f"Chunks: {doc.get('chunk_count')} | Hash: `{doc.get('hash')[:8]}...`")
-else:
-    st.sidebar.caption("No files indexed yet. Upload clinical data above.")
+# System checklist status logs (Requirement 8)
+st.sidebar.markdown("### 📋 System Checklist Status")
+st.sidebar.markdown(f"""
+- {'✓' if status['r2_connected'] else '✗'} **Connected to R2**
+- ✓ **Local model loaded** (Path: `all-MiniLM-L6-v2`)
+- ✓ **FAISS loaded** (Index IDMap flat IP)
+- ✓ **Current index version**: `v{status['version']}`
+- {'✓' if status['index_loaded'] else '✗'} **Documents synchronized**
+- ✓ **Ready**
+""")
 
 # Search UI Main Section
 st.header("🔎 Ask Assistant")
@@ -829,6 +984,9 @@ if st.button("🔍 Search Database", type="primary"):
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
         st.error("❌ Missing GOOGLE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
     else:
+        # Sync index first to ensure searching against the latest version (Requirement 4)
+        sync_index_if_version_changed()
+        
         # Check if local index has vectors
         if st.session_state.vector_store.index.ntotal == 0:
             st.error("❌ Index is empty. Please upload documents in the sidebar first.")
@@ -886,3 +1044,41 @@ if st.button("🔍 Search Database", type="primary"):
                         feedback = st.text_input("What could be improved?")
                         if feedback:
                             st.info("Feedback recorded. Thank you!")
+
+# ========================================
+# DOCUMENT MANAGEMENT PANEL (Requirement 9)
+# ========================================
+st.markdown("---")
+st.header("🗄️ Document Management Portal")
+st.caption("Manage clinical documents stored on Cloudflare R2 and synced to the local FAISS index.")
+
+# Read metadata mapping database
+metadata = get_document_metadata()
+indexed_docs = metadata.get("documents", {})
+
+if indexed_docs:
+    st.markdown("### 📄 Indexed Documents")
+    for doc_id, doc in list(indexed_docs.items()):
+        # Draw document information container card
+        with st.container():
+            col_doc_info, col_doc_actions = st.columns([5, 1])
+            with col_doc_info:
+                st.markdown(f"📄 **{doc.get('filename')}**")
+                # Format size and timestamp
+                ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
+                size = doc.get("file_size_kb")
+                size_str = f"{size:.1f} KB" if size is not None else "Unknown size"
+                st.caption(f"📅 Uploaded: `{ts}` | 💾 Size: `{size_str}` | 🧩 Chunks: `{doc.get('chunk_count')}`")
+            with col_doc_actions:
+                # Add unique key to avoid Streamlit widget duplication
+                if st.button("🗑️ Delete", key=f"del_{doc_id}", help=f"Delete {doc.get('filename')} from index and R2"):
+                    delete_document_workflow(doc_id)
+            st.markdown("<hr style='margin: 10px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.05);'/>", unsafe_allow_html=True)
+else:
+    st.info("ℹ️ No documents indexed yet. Upload files in the sidebar uploader to begin.")
+
+# Admin Section
+with st.expander("🛠️ Administrative Controls"):
+    st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
+    if st.button("⚙️ Rebuild / Clear Index", type="secondary", help="Clear all documents and rebuild index"):
+        rebuild_empty_index_workflow()

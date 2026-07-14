@@ -38,7 +38,15 @@ def get_embeddings_model():
     google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if google_key and GoogleGenerativeAIEmbeddings is not None:
         print("🚀 [FAISSStore] Using Google Gemini text-embedding-004 (Cloud API Mode)...", flush=True)
-        return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=google_key)
+        try:
+            model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=google_key)
+            # Test it immediately
+            model.embed_query("test")
+            print("🚀 [FAISSStore] Google Gemini embeddings initialized and verified successfully.", flush=True)
+            return model
+        except Exception as e:
+            print(f"🚀 [FAISSStore] Google Gemini embeddings test failed: {e}", flush=True)
+            print("🚀 [FAISSStore] Falling back to local HuggingFace embeddings...", flush=True)
         
     print("🚀 [FAISSStore] Loading HuggingFace embeddings model (all-MiniLM-L6-v2) (Local CPU Mode)...", flush=True)
     if HuggingFaceEmbeddings is None:

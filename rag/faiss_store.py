@@ -59,7 +59,17 @@ def get_embeddings_model():
     # Prefer Google Gemini Embeddings (runs via API, bypassing PyTorch segfaults on Python 3.14)
     google_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if google_key:
-        print("🚀 [FAISSStore] Using Google Gemini text-embedding-004 (Cloud API Mode via native google-genai)...", flush=True)
+        try:
+            import google.genai
+            import importlib.metadata
+            genai_version = importlib.metadata.version("google-genai")
+        except Exception:
+            genai_version = "Unknown/Not Installed"
+            
+        print(f"🚀 [STARTUP LOG] google-genai SDK Version: {genai_version}", flush=True)
+        print("🚀 [STARTUP LOG] Instantiating custom GoogleGenAIEmbeddings wrapper...", flush=True)
+        print(f"🚀 [STARTUP LOG] Embedding Class: {GoogleGenAIEmbeddings.__name__}", flush=True)
+        
         try:
             model = GoogleGenAIEmbeddings(model="text-embedding-004", google_api_key=google_key)
             # Test it immediately

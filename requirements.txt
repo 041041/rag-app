@@ -14,3 +14,4 @@ langchain-huggingface
 faiss-cpu
 boto3
 langchain-groq
+google-genai

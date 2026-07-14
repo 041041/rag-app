@@ -519,6 +519,20 @@ def initialize_app():
         # Initialize default vector store structure
         print("🚀 [STARTUP] Instantiating FAISSVectorStore...", flush=True)
         store = FAISSVectorStore()
+        
+        # Log active embedding details
+        try:
+            embed_class = store.embeddings.__class__.__name__
+            print(f"🚀 [STARTUP LOG] Active Embedding Class: {embed_class}", flush=True)
+            if embed_class == "GoogleGenAIEmbeddings":
+                print("🚀 [STARTUP LOG] Status: Using custom native google-genai wrapper.", flush=True)
+            elif embed_class == "HuggingFaceEmbeddings":
+                print("🚀 [STARTUP LOG] Status: Using local HuggingFace embeddings wrapper.", flush=True)
+            else:
+                print(f"🚀 [STARTUP LOG] Status: Using {embed_class} wrapper.", flush=True)
+        except Exception as e:
+            print(f"🚀 [STARTUP LOG] Error logging embedding details: {e}", flush=True)
+            
         print("🚀 [STARTUP] FAISSVectorStore initialized. Verifying Cloudflare R2 connection...", flush=True)
         
         # Health Check: Connect to R2

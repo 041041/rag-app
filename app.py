@@ -499,143 +499,116 @@ def query_with_features(qa_chain, query: str):
 # ========================================
 # APPLICATION STARTUP & INITIALIZATION
 # ========================================
-def initialize_app():
+@st.cache_resource
+def initialize_rag():
     """
-    Startup Health Check & Synchronization workflow.
-    - Connects to R2
-    - Checks index files availability
-    - Downloads index files if present or creates a new empty FAISS index.
+    Cached Startup Health Check & Synchronization workflow.
+    Guarantees execution exactly once globally across all sessions.
     """
-    if "vector_store" not in st.session_state:
-        print("🚀 [STARTUP] Starting RAG App Initialization...", flush=True)
-        st.session_state.health_status = {
-            "r2_connected": False,
-            "index_loaded": False,
-            "version": 0,
-            "last_updated": "Never",
-            "message": ""
-        }
-        
-        # Initialize default vector store structure
-        print("🚀 [STARTUP] Instantiating FAISSVectorStore...", flush=True)
-        store = FAISSVectorStore()
-        
-        # Log active embedding details
+    print("🚀 [STARTUP LOG] [STEP 1] Running initialize_rag()...", flush=True)
+    
+    # 1. Initialize FAISSVectorStore
+    print("🚀 [STARTUP LOG] [STEP 2] Creating FAISSVectorStore...", flush=True)
+    store = FAISSVectorStore()
+    print("🚀 [STARTUP LOG] [STEP 3] FAISSVectorStore created successfully.", flush=True)
+    
+    health_status = {
+        "r2_connected": False,
+        "index_loaded": False,
+        "version": 0,
+        "last_updated": "Never",
+        "message": ""
+    }
+    
+    # 2. Verify R2 connection
+    print("🚀 [STARTUP LOG] [STEP 4] Verifying Cloudflare R2 connection...", flush=True)
+    r2_connected = r2_storage.verify_connection()
+    print(f"🚀 [STARTUP LOG] [STEP 5] R2 verification completed. Result: {r2_connected}", flush=True)
+    health_status["r2_connected"] = r2_connected
+    
+    if r2_connected:
+        print("🚀 [STARTUP LOG] [STEP 6] Checking if index files exist on Cloudflare R2...", flush=True)
+        index_files_exist = False
         try:
-            embed_class = store.embeddings.__class__.__name__
-            print(f"🚀 [STARTUP LOG] Active Embedding Class: {embed_class}", flush=True)
-            if embed_class == "GoogleGenAIEmbeddings":
-                print("🚀 [STARTUP LOG] Status: Using custom native google-genai wrapper.", flush=True)
-            elif embed_class == "HuggingFaceEmbeddings":
-                print("🚀 [STARTUP LOG] Status: Using local HuggingFace embeddings wrapper.", flush=True)
-            else:
-                print(f"🚀 [STARTUP LOG] Status: Using {embed_class} wrapper.", flush=True)
-        except Exception as e:
-            print(f"🚀 [STARTUP LOG] Error logging embedding details: {e}", flush=True)
-            
-        print("🚀 [STARTUP] FAISSVectorStore initialized. Verifying Cloudflare R2 connection...", flush=True)
-        
-        # Health Check: Connect to R2
-        r2_connected = r2_storage.verify_connection()
-        print(f"🚀 [STARTUP] R2 connection verification completed. Result: {r2_connected}", flush=True)
-        st.session_state.health_status["r2_connected"] = r2_connected
-        
-        if r2_connected:
-            # Health Check: Verify if Index files exist on Cloudflare R2
-            print("🚀 [STARTUP] Checking index availability on Cloudflare R2...", flush=True)
-            index_files_exist = False
-            try:
-                index_files_exist = (
-                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}") and
-                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}") and
-                    r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
-                )
-                print(f"🚀 [STARTUP] R2 index check result: {index_files_exist}", flush=True)
-            except Exception as e:
-                logger.error(f"R2 verification error: {e}")
-                print(f"🚀 [STARTUP] R2 verification threw exception: {e}", flush=True)
-                
-            if index_files_exist:
-                print("🚀 [STARTUP] Index files found. Synchronizing from R2 to local container...", flush=True)
-                try:
-                    # Synchronize Local Cache
-                    r2_storage.download_file(
-                        f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
-                        settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
-                    )
-                    r2_storage.download_file(
-                        f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
-                        settings.INDEXES_DIR / settings.METADATA_PKL_FILE
-                    )
-                    r2_storage.download_file(
-                        f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
-                        settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
-                    )
-                    print("🚀 [STARTUP] Finished downloading files from R2. Loading FAISS index...", flush=True)
-                    
-                    # Load FAISS index and metadata
-                    store.load(str(settings.INDEXES_DIR))
-                    st.session_state.health_status["index_loaded"] = True
-                    
-                    # Extract version details
-                    doc_meta = get_document_metadata()
-                    st.session_state.health_status["version"] = doc_meta.get("version", 0)
-                    st.session_state.health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
-                    st.session_state.health_status["message"] = f"Synchronized successfully with R2 index (v{st.session_state.health_status['version']})."
-                    print(f"🚀 [STARTUP] Successfully synchronized R2 index (v{st.session_state.health_status['version']}).", flush=True)
-                    
-                except Exception as e:
-                    logger.error(f"Failed to synchronize index from R2: {e}")
-                    print(f"🚀 [STARTUP] Synchronization failed: {e}. Falling back to empty index.", flush=True)
-                    st.session_state.health_status["message"] = f"Failed to load R2 index files: {e}. Falling back to empty index."
-                    # Fallback to local empty
-                    store = FAISSVectorStore()
-                    store.save(str(settings.INDEXES_DIR))
-                    empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
-                    save_document_metadata(empty_meta)
-            else:
-                print("🚀 [STARTUP] Cloudflare R2 is empty. Initializing brand new local empty index...", flush=True)
-                st.session_state.health_status["message"] = "Cloudflare R2 empty. Initialized empty local index."
-                # Save empty local files
-                store.save(str(settings.INDEXES_DIR))
-                empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
-                save_document_metadata(empty_meta)
-                print("🚀 [STARTUP] Saved empty local index files.", flush=True)
-        else:
-            print("🚀 [STARTUP] R2 is offline. Checking if local cache files are available for offline fallback...", flush=True)
-            st.session_state.health_status["message"] = "Offline mode: R2 connection failed."
-            
-            # Check if local files exist offline
-            local_exists = (
-                (settings.INDEXES_DIR / settings.FAISS_INDEX_FILE).exists() and
-                (settings.INDEXES_DIR / settings.METADATA_PKL_FILE).exists() and
-                (settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE).exists()
+            index_files_exist = (
+                r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}") and
+                r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}") and
+                r2_storage.check_file_exists(f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
             )
-            print(f"🚀 [STARTUP] Local cache files exist offline: {local_exists}", flush=True)
-            if local_exists:
-                try:
-                    store.load(str(settings.INDEXES_DIR))
-                    st.session_state.health_status["index_loaded"] = True
-                    doc_meta = get_document_metadata()
-                    st.session_state.health_status["version"] = doc_meta.get("version", 0)
-                    st.session_state.health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
-                    print(f"🚀 [STARTUP] Loaded local offline cache (v{st.session_state.health_status['version']}).", flush=True)
-                except Exception as e:
-                    logger.error(f"Error loading offline cache: {e}")
-                    print(f"🚀 [STARTUP] Error loading offline cache: {e}. Reinitializing empty index.", flush=True)
-                    store = FAISSVectorStore()
-                    store.save(str(settings.INDEXES_DIR))
-                    empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
-                    save_document_metadata(empty_meta)
-            else:
-                print("🚀 [STARTUP] Local files do not exist either. Initializing new local empty index...", flush=True)
+            print(f"🚀 [STARTUP LOG] [STEP 7] R2 index check result: {index_files_exist}", flush=True)
+        except Exception as e:
+            print(f"🚀 [STARTUP LOG] [STEP 7 ERROR] Failed to check R2 index availability: {e}", flush=True)
+            
+        if index_files_exist:
+            print("🚀 [STARTUP LOG] [STEP 8] Synchronizing index files from R2 to local container...", flush=True)
+            try:
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                    settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                    settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                    settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                )
+                print("🚀 [STARTUP LOG] [STEP 9] Loading downloaded index files into FAISSVectorStore...", flush=True)
+                store.load(str(settings.INDEXES_DIR))
+                health_status["index_loaded"] = True
+                
+                doc_meta = get_document_metadata()
+                health_status["version"] = doc_meta.get("version", 0)
+                health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
+                health_status["message"] = f"Synchronized successfully with R2 index (v{health_status['version']})."
+                print(f"🚀 [STARTUP LOG] [STEP 10] Successfully loaded index (v{health_status['version']}).", flush=True)
+            except Exception as e:
+                print(f"🚀 [STARTUP LOG] [STEP 10 ERROR] Failed to synchronize R2 index: {e}. Reinitializing empty index.", flush=True)
+                health_status["message"] = f"Failed to load R2 index: {e}."
+                store = FAISSVectorStore()
                 store.save(str(settings.INDEXES_DIR))
                 empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
                 save_document_metadata(empty_meta)
-                print("🚀 [STARTUP] Saved new local empty index.", flush=True)
-                
-        st.session_state.vector_store = store
-        print("🚀 [STARTUP] RAG App Initialization Completed successfully.", flush=True)
+        else:
+            print("🚀 [STARTUP LOG] [STEP 8] R2 is empty. Initializing brand new local empty index...", flush=True)
+            health_status["message"] = "Cloudflare R2 empty. Initialized empty local index."
+            store.save(str(settings.INDEXES_DIR))
+            empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+            save_document_metadata(empty_meta)
+            print("🚀 [STARTUP LOG] [STEP 9] Saved new empty index locally.", flush=True)
+    else:
+        print("🚀 [STARTUP LOG] [STEP 6] R2 is offline. Checking if local cache files are available for offline fallback...", flush=True)
+        health_status["message"] = "Offline mode: R2 connection failed."
+        local_exists = (
+            (settings.INDEXES_DIR / settings.FAISS_INDEX_FILE).exists() and
+            (settings.INDEXES_DIR / settings.METADATA_PKL_FILE).exists() and
+            (settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE).exists()
+        )
+        print(f"🚀 [STARTUP LOG] [STEP 7] Local cache files exist offline: {local_exists}", flush=True)
+        if local_exists:
+            try:
+                store.load(str(settings.INDEXES_DIR))
+                health_status["index_loaded"] = True
+                doc_meta = get_document_metadata()
+                health_status["version"] = doc_meta.get("version", 0)
+                health_status["last_updated"] = doc_meta.get("last_updated", "Unknown")
+                print(f"🚀 [STARTUP LOG] [STEP 8] Loaded local offline cache (v{health_status['version']}).", flush=True)
+            except Exception as e:
+                print(f"🚀 [STARTUP LOG] [STEP 8 ERROR] Failed to load offline cache: {e}. Reinitializing empty index.", flush=True)
+                store = FAISSVectorStore()
+                store.save(str(settings.INDEXES_DIR))
+                empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+                save_document_metadata(empty_meta)
+        else:
+            print("🚀 [STARTUP LOG] [STEP 8] Local files do not exist either. Saving new empty index...", flush=True)
+            store.save(str(settings.INDEXES_DIR))
+            empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+            save_document_metadata(empty_meta)
+            print("🚀 [STARTUP LOG] [STEP 9] Saved new local empty index.", flush=True)
+            
+    print("🚀 [STARTUP LOG] [STEP 11] initialize_rag() completed.", flush=True)
+    return store, health_status
 
 # Startup initialization will run lazily in the main UI flow below
 
@@ -719,7 +692,9 @@ st.sidebar.header("🌐 R2 Storage Node Status")
 # Initialize app index and R2 connection lazily with a nice spinner
 if "vector_store" not in st.session_state:
     with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
-        initialize_app()
+        store, health_status = initialize_rag()
+        st.session_state.vector_store = store
+        st.session_state.health_status = health_status
 
 status = st.session_state.health_status
 if status["r2_connected"]:

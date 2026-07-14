@@ -12,6 +12,8 @@ from rag.vector_store import VectorStore, Document
 logger = logging.getLogger("RAGApp.FAISSStore")
 logger.setLevel(logging.INFO)
 
+from functools import lru_cache
+
 # Embeddings loader helpers
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
@@ -21,6 +23,7 @@ except ImportError:
     except ImportError:
         HuggingFaceEmbeddings = None
 
+@lru_cache(maxsize=1)
 def get_embeddings_model():
     """
     Load the HuggingFace embedding model.

@@ -42,10 +42,23 @@ class FAISSVectorStore(VectorStore):
     """
     
     def __init__(self, dimension: int = 384):
+        print("🔧 [FAISSStore] Inside __init__", flush=True)
         self.dimension = dimension
+        
+        print("🔧 [FAISSStore] Call get_embeddings_model()", flush=True)
         self.embeddings = get_embeddings_model()
-        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+        print("🔧 [FAISSStore] get_embeddings_model() completed", flush=True)
+        
+        print("🔧 [FAISSStore] Call faiss.IndexFlatIP()", flush=True)
+        flat_index = faiss.IndexFlatIP(self.dimension)
+        print("🔧 [FAISSStore] faiss.IndexFlatIP() completed", flush=True)
+        
+        print("🔧 [FAISSStore] Call faiss.IndexIDMap()", flush=True)
+        self.index = faiss.IndexIDMap(flat_index)
+        print("🔧 [FAISSStore] faiss.IndexIDMap() completed", flush=True)
+        
         self.docs: Dict[int, Document] = {}
+        print("🔧 [FAISSStore] __init__ completed successfully", flush=True)
 
     def add_documents(self, documents: List[Document]) -> List[int]:
         """

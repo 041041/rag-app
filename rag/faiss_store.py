@@ -42,10 +42,63 @@ class FAISSVectorStore(VectorStore):
     """
     
     def __init__(self, dimension: int = 384):
-        self.embeddings = get_embeddings_model()
+        import time
+        import traceback
+        
+        print("🚀 [INIT 1] Constructor entered", flush=True)
+        start_time = time.time()
+        
+        # Step 2: Creating embeddings
+        print("🚀 [INIT 2] Creating embeddings...", flush=True)
+        try:
+            t0 = time.time()
+            self.embeddings = get_embeddings_model()
+            dt = time.time() - t0
+            print(f"🚀 [INIT 3] Embeddings ready. Time taken: {dt:.2f}s", flush=True)
+            if dt > 5.0:
+                print(f"⚠️ [WARNING] Embedding model load took longer than 5 seconds: {dt:.2f}s", flush=True)
+        except Exception as e:
+            print("❌ [INIT ERROR] Failed to load embeddings:", flush=True)
+            traceback.print_exc()
+            raise e
+            
+        # Set dimension
         self.dimension = dimension
-        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+        
+        # Step 4: Creating flat FAISS index
+        print("🚀 [INIT 4] Creating FAISS IndexFlatIP...", flush=True)
+        try:
+            t0 = time.time()
+            self.flat_index = faiss.IndexFlatIP(self.dimension)
+            dt = time.time() - t0
+            print(f"🚀 [INIT 5] FAISS IndexFlatIP ready. Time taken: {dt:.2f}s", flush=True)
+            if dt > 5.0:
+                print(f"⚠️ [WARNING] IndexFlatIP creation took longer than 5 seconds: {dt:.2f}s", flush=True)
+        except Exception as e:
+            print("❌ [INIT ERROR] Failed to create IndexFlatIP:", flush=True)
+            traceback.print_exc()
+            raise e
+            
+        # Step 6: Creating IndexIDMap wrapper
+        print("🚀 [INIT 6] Wrapping index with IndexIDMap...", flush=True)
+        try:
+            t0 = time.time()
+            self.index = faiss.IndexIDMap(self.flat_index)
+            dt = time.time() - t0
+            print(f"🚀 [INIT 7] FAISS IndexIDMap ready. Time taken: {dt:.2f}s", flush=True)
+            if dt > 5.0:
+                print(f"⚠️ [WARNING] IndexIDMap wrapping took longer than 5 seconds: {dt:.2f}s", flush=True)
+        except Exception as e:
+            print("❌ [INIT ERROR] Failed to wrap with IndexIDMap:", flush=True)
+            traceback.print_exc()
+            raise e
+            
+        # Step 8: Document mapping dict initialization
+        print("🚀 [INIT 8] Initializing document mapping dictionary...", flush=True)
         self.docs: Dict[int, Document] = {}
+        
+        total_dt = time.time() - start_time
+        print(f"🚀 [INIT 9] Initialization complete. Total time: {total_dt:.2f}s", flush=True)
 
     def add_documents(self, documents: List[Document]) -> List[int]:
         """

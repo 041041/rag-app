@@ -1121,30 +1121,39 @@ st.markdown("""
         backdrop-filter: blur(6px) !important;
     }
     div[role="dialog"], [data-testid="stDialog"] [role="dialog"], [data-testid="stModal"] > div {
-        background-color: rgb(15, 23, 42) !important;
-        background: rgb(15, 23, 42) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border: 1px solid rgba(0, 0, 0, 0.1) !important;
         border-radius: 16px !important;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5) !important;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15) !important;
     }
     div[role="dialog"] h1, div[role="dialog"] h2, div[role="dialog"] h3, div[role="dialog"] h4, 
     div[role="dialog"] p, div[role="dialog"] label, div[role="dialog"] span, div[role="dialog"] div, 
     div[role="dialog"] small, div[role="dialog"] th, div[role="dialog"] td, div[role="dialog"] summary,
     div[role="dialog"] summary p, div[role="dialog"] summary span, div[role="dialog"] svg, div[role="dialog"] button {
-        color: #f0f3f9 !important;
-        fill: #f0f3f9 !important;
+        color: #0f172a !important;
+        fill: #0f172a !important;
+    }
+    /* Style the administrative controls expander card inside the modal to be light gray with dark border */
+    div[role="dialog"] div[data-testid="stExpander"] {
+        background-color: #f8fafc !important;
+        border: 1px solid rgba(0, 0, 0, 0.08) !important;
+        border-radius: 8px !important;
     }
     /* Form inputs inside modal should remain highly readable */
     div[role="dialog"] input, div[role="dialog"] textarea, div[role="dialog"] select {
         color: #0f172a !important;
-        background-color: #ffffff !important;
+        background-color: #f1f5f9 !important;
+        border: 1px solid rgba(0, 0, 0, 0.1) !important;
     }
     div[data-testid="stPopoverBody"] {
-        background-color: rgb(30, 41, 59) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background-color: #ffffff !important;
+        border: 1px solid rgba(0, 0, 0, 0.1) !important;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
     }
-    div[data-testid="stPopoverBody"] h1, div[data-testid="stPopoverBody"] h2, div[data-testid="stPopoverBody"] h3, div[data-testid="stPopoverBody"] p, div[data-testid="stPopoverBody"] label, div[data-testid="stPopoverBody"] span, div[data-testid="stPopoverBody"] div {
-        color: #f0f3f9 !important;
+    div[data-testid="stPopoverBody"] h1, div[data-testid="stPopoverBody"] h2, div[data-testid="stPopoverBody"] h3, div[data-testid="stPopoverBody"] p, div[data-testid="stPopoverBody"] label, div[data-testid="stPopoverBody"] span, div[data-testid="stPopoverBody"] div, div[data-testid="stPopoverBody"] button {
+        color: #0f172a !important;
+        fill: #0f172a !important;
     }
 </style>
 """, unsafe_allow_html=True)

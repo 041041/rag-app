@@ -612,6 +612,188 @@ def initialize_rag():
 
 # Startup initialization will run lazily in the main UI flow below
 
+@st.cache_resource
+def get_file_bytes(filename: str) -> bytes:
+    """
+    Downloads file from Cloudflare R2 (if missing locally) and returns file bytes.
+    """
+    local_path = settings.DATA_DIR / filename
+    if not local_path.exists():
+        r2_key = f"{settings.R2_DOCUMENTS_PREFIX}{filename}"
+        r2_storage.download_file(r2_key, local_path)
+    if local_path.exists():
+        return local_path.read_bytes()
+    return b""
+
+@st.dialog("🗑️ Delete Document Confirmation")
+def confirm_delete_dialog(doc_id: str, filename: str):
+    """
+    Modal confirmation popup for document deletion.
+    """
+    st.write(f"Are you sure you want to permanently delete **{filename}** from the index and Cloudflare R2?")
+    st.warning("⚠️ This action cannot be undone and will remove all corresponding vector chunks.")
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        if st.button("Cancel", key="cancel_delete_btn", use_container_width=True):
+            st.rerun()
+    with col_c2:
+        if st.button("Delete Permanent", key="confirm_delete_btn", type="primary", use_container_width=True):
+            delete_document_workflow(doc_id)
+            st.rerun()
+
+def sync_index_if_version_changed():
+    """
+    Checks if the remote R2 index version is newer than the local loaded version.
+    If newer, downloads and reloads the index.
+    """
+    if "health_status" not in st.session_state or not st.session_state.health_status.get("r2_connected"):
+        return
+        
+    print("🔄 Checking if remote R2 index version changed...", flush=True)
+    try:
+        temp_meta_path = settings.INDEXES_DIR / "temp_document_metadata.json"
+        # Download document_metadata.json from R2 to get the remote version
+        download_success = r2_storage.download_file(
+            f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+            temp_meta_path
+        )
+        if not download_success:
+            print("🔄 Remote metadata not found on R2.", flush=True)
+            return
+            
+        import json
+        if temp_meta_path.exists():
+            with open(temp_meta_path, 'r', encoding='utf-8') as f:
+                remote_meta = json.load(f)
+                
+            remote_version = remote_meta.get("version", 0)
+            local_version = st.session_state.health_status["version"]
+            
+            if remote_version > local_version:
+                print(f"🔄 Remote index version (v{remote_version}) is newer than local version (v{local_version}). Syncing...", flush=True)
+                with st.spinner(f"🔄 Syncing newer R2 index version (v{remote_version})..."):
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                        settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                    )
+                    r2_storage.download_file(
+                        f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                        settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                    )
+                    import shutil
+                    shutil.copy2(temp_meta_path, settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE)
+                    
+                    st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+                    st.session_state.health_status["version"] = remote_version
+                    st.session_state.health_status["last_updated"] = remote_meta.get("last_updated", "Just now")
+                    st.session_state.health_status["index_loaded"] = True
+                    print(f"✅ Synced index successfully to v{remote_version}", flush=True)
+            else:
+                print(f"🔄 Index is up to date (local: v{local_version}, remote: v{remote_version})", flush=True)
+    except Exception as e:
+        print(f"⚠️ Error checking R2 version: {e}", flush=True)
+
+def delete_document_workflow(doc_id: str):
+    owner_id = f"delete_session_{int(time.time())}_{doc_id}"
+    with st.spinner("🗑️ Acquiring R2 Lock & deleting document..."):
+        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.error("❌ Locking Conflict: another operation is writing. Please try again.")
+            return
+            
+        try:
+            try:
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                    settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                    settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                    settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                )
+                st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+            except Exception as e:
+                logger.info(f"No index to pull: {e}")
+                
+            metadata = get_document_metadata()
+            if doc_id not in metadata.get("documents", {}):
+                st.error("❌ Document not found in index.")
+                return
+                
+            doc_info = metadata["documents"][doc_id]
+            filename = doc_info["filename"]
+            chunk_ids = doc_info.get("chunk_ids", [])
+            
+            if chunk_ids:
+                import numpy as np
+                ids_to_remove = np.array(chunk_ids, dtype=np.int64)
+                removed_count = st.session_state.vector_store.index.remove_ids(ids_to_remove)
+                print(f"🗑️ Removed {removed_count} vectors from FAISS index.", flush=True)
+                
+            del metadata["documents"][doc_id]
+            metadata["version"] = metadata.get("version", 0) + 1
+            metadata["last_updated"] = datetime.now().isoformat()
+            
+            st.session_state.vector_store.save(str(settings.INDEXES_DIR))
+            save_document_metadata(metadata)
+            
+            r2_storage.backup_indexes()
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+            
+            r2_key = doc_info.get("r2_path", f"{settings.R2_DOCUMENTS_PREFIX}{filename}")
+            r2_storage.delete_file(r2_key)
+            
+            if filename in st.session_state.processed_files:
+                st.session_state.processed_files.remove(filename)
+                
+            st.session_state.health_status["version"] = metadata["version"]
+            st.session_state.health_status["last_updated"] = metadata["last_updated"]
+            
+            st.success(f"🗑️ Successfully deleted {filename} from index and Cloudflare R2.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Failed to delete document: {e}")
+        finally:
+            r2_storage.release_lock(owner_id)
+
+def rebuild_empty_index_workflow():
+    owner_id = f"rebuild_session_{int(time.time())}"
+    with st.spinner("⚙️ Rebuilding empty index on Cloudflare R2..."):
+        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.error("❌ Locking Conflict. Please try again.")
+            return
+        try:
+            store = FAISSVectorStore()
+            store.save(str(settings.INDEXES_DIR))
+            
+            empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
+            save_document_metadata(empty_meta)
+            
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+            
+            st.session_state.vector_store = store
+            st.session_state.health_status["version"] = 0
+            st.session_state.health_status["last_updated"] = empty_meta["last_updated"]
+            st.session_state.processed_files.clear()
+            
+            st.success("⚙️ Successfully rebuilt index! All indices cleared.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Rebuild failed: {e}")
+        finally:
+            r2_storage.release_lock(owner_id)
+
+# Startup initialization will run lazily in the main UI flow below
+
 def sync_index_if_version_changed():
     """
     Checks if the remote R2 index version is newer than the local loaded version.
@@ -830,54 +1012,55 @@ with col2:
     stats = st.session_state.metrics.get_stats()
     st.metric("Total Queries", stats["total_queries"])
 
-# Sidebar Stats & Details
-st.sidebar.header("📊 System Metrics")
-stats = st.session_state.metrics.get_stats()
-col_s1, col_s2 = st.sidebar.columns(2)
-col_s1.metric("Cache Hit Rate", stats["cache_hit_rate"])
-col_s2.metric("Error Rate", stats["error_rate"])
-col_s1.metric("Avg Response", stats["avg_response_time"])
-col_s2.metric("Total Tokens", f"{stats['total_tokens']:,}")
-st.sidebar.metric("Estimated Cost", stats["estimated_cost"])
-
-cache_stats = st.session_state.query_cache.get_stats()
-st.sidebar.metric("Cache Usage", f"{cache_stats['size']}/{cache_stats['max_size']}")
-
-st.sidebar.markdown("---")
-
-# Health Status Panel
-st.sidebar.header("🌐 R2 Storage Node Status")
-
-# Initialize app index and R2 connection lazily with a nice spinner
-if "vector_store" not in st.session_state:
-    with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
-        store, health_status = initialize_rag()
-        st.session_state.vector_store = store
-        st.session_state.health_status = health_status
-else:
-    # Auto-synchronize index from R2 if version changed (runs on browser reloads or page re-renders)
-    sync_index_if_version_changed()
-
+# Left Sidebar Configurations
+# 1. System Health Panel (Requirement 4 & 8)
+st.sidebar.header("📋 System Health")
 status = st.session_state.health_status
-if status["r2_connected"]:
-    st.sidebar.success("✅ Connected to Cloudflare R2")
-    st.sidebar.markdown(f"**Index Version**: v{status['version']}")
-    st.sidebar.markdown(f"**Last Sync**: `{status['last_updated'][:19]}`")
-else:
-    st.sidebar.warning("⚠️ R2 Disconnected (Offline Mode)")
-    
-with st.sidebar.expander("ℹ️ Connection Details"):
-    st.write(f"Endpoint: `{settings.R2_ENDPOINT or 'None'}`")
-    st.write(f"Bucket: `{settings.R2_BUCKET_NAME or 'None'}`")
-    st.caption(status["message"])
+st.sidebar.markdown(f"""
+- {'🟢' if status['r2_connected'] else '🔴'} **Cloud Storage Connected**
+- 🟢 **Embedding Model Ready**
+- 🟢 **Knowledge Base Version**: `v{status['version']}`
+- {'🟢' if status['index_loaded'] else '🔴'} **Knowledge Base Synced**
+- 🟢 **System Ready**
+""")
 
-if st.sidebar.button("🔄 Sync with Cloudflare R2"):
-    st.session_state.pop("vector_store", None)
-    st.rerun()
+# 2. Knowledge Base Stats (Requirement 5)
+metadata = get_document_metadata()
+indexed_docs = metadata.get("documents", {})
+total_docs = len(indexed_docs)
+total_chunks = sum(doc.get("chunk_count", 0) for doc in indexed_docs.values())
+total_size_kb = sum(doc.get("file_size_kb", 0) for doc in indexed_docs.values())
+total_size_mb = total_size_kb / 1024
+
+last_sync_raw = status.get("last_updated", "Never")
+if last_sync_raw != "Never" and len(last_sync_raw) > 16:
+    try:
+        dt = datetime.fromisoformat(last_sync_raw)
+        if dt.date() == datetime.now().date():
+            last_sync_str = f"Today {dt.strftime('%I:%M %p')}"
+        else:
+            last_sync_str = dt.strftime("%b %d, %I:%M %p")
+    except Exception:
+        last_sync_str = last_sync_raw[:16].replace("T", " ")
+else:
+    last_sync_str = last_sync_raw
+
+st.sidebar.markdown("### 📊 Knowledge Base Stats")
+st.sidebar.markdown(f"""
+- **Documents**: `{total_docs}`
+- **Total Chunks**: `{total_chunks:,}`
+- **Knowledge Base Version**: `v{status['version']}`
+- **Cloud Storage Used**: `{total_size_mb:.2f} MB`
+- **Last Sync**: `{last_sync_str}`
+- **Embedding Model**: `all-MiniLM-L6-v2`
+""")
+
+# 3. Connection & Sync state (Requirement 6)
+st.sidebar.caption(f"✓ Synced ({last_sync_str})")
 
 st.sidebar.markdown("---")
 
-# Sidebar file uploader
+# 4. Document Ingestion sidebar uploader
 st.sidebar.header("📁 Document Ingestion")
 uploaded = st.sidebar.file_uploader(
     "Upload clinical trial files (PDF, DOCX, TXT, CSV, MD, HTML)",
@@ -887,6 +1070,7 @@ uploaded = st.sidebar.file_uploader(
 
 # Set of processed file names in this session to prevent duplicate spams on rerun
 if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = set()
     st.session_state.processed_files = set()
 
 if uploaded:
@@ -950,48 +1134,58 @@ if uploaded:
                 # Release Distributed Lock
                 r2_storage.release_lock(owner_id)
 
-# System checklist status logs (Requirement 8)
-st.sidebar.markdown("### 📋 System Checklist Status")
-st.sidebar.markdown(f"""
-- {'✓' if status['r2_connected'] else '✗'} **Connected to R2**
-- ✓ **Local model loaded** (Path: `all-MiniLM-L6-v2`)
-- ✓ **FAISS loaded** (Index IDMap flat IP)
-- ✓ **Current index version**: `v{status['version']}`
-- {'✓' if status['index_loaded'] else '✗'} **Documents synchronized**
-- ✓ **Ready**
-""")
+# Startup check trigger
+if "vector_store" not in st.session_state:
+    with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
+        store, health_status = initialize_rag()
+        st.session_state.vector_store = store
+        st.session_state.health_status = health_status
+else:
+    sync_index_if_version_changed()
 
-# Search UI Main Section
-st.header("🔎 Ask Assistant")
-q = st.text_area(
-    "Ask a question about your clinical trials / study data standards",
-    height=120,
-    placeholder="What are the inclusion criteria for the studies?",
-    key="query_input"
-)
+# Main Layout Split (Requirement 1)
+col_left, col_right = st.columns([13, 8])
 
-with st.expander("💡 Example Questions"):
-    st.markdown("""
-    - What are the main findings of the study?
-    - What are the inclusion criteria?
-    - What adverse events were reported?
-    - Summarize the methodology
-    """)
+with col_left:
+    st.header("🔎 Ask Assistant")
+    
+    # Optional search filter info
+    if st.session_state.get("query_filter"):
+        st.info(f"🔍 Currently searching only within: **{st.session_state.query_filter}**")
+        if st.button("❌ Clear Filter", key="clear_filter_btn"):
+            st.session_state.query_filter = None
+            st.session_state.query_input = ""
+            st.rerun()
+            
+    q = st.text_area(
+        "Ask a question about your clinical trials / study data standards",
+        height=120,
+        placeholder="What are the inclusion criteria for the studies?",
+        value=st.session_state.get("query_input", ""),
+        key="query_input_box"
+    )
+    
+    q_text = q
+    
+    with st.expander("💡 Example Questions"):
+        st.markdown("""
+        - What are the main findings of the study?
+        - What are the inclusion criteria?
+        - What adverse events were reported?
+        - Summarize the methodology
+        """)
 
 if st.button("🔍 Search Database", type="primary"):
-    if not q.strip():
+    if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
         st.error("❌ Missing GOOGLE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
     else:
-        # Sync index first to ensure searching against the latest version (Requirement 4)
         sync_index_if_version_changed()
         
-        # Check if local index has vectors
         if st.session_state.vector_store.index.ntotal == 0:
             st.error("❌ Index is empty. Please upload documents in the sidebar first.")
         else:
-            # Wrap local FAISS VectorStore into Retriever Adapter
             retriever = VectorStoreRetrieverAdapter(st.session_state.vector_store, k=settings.RETRIEVER_K)
             try:
                 qa = create_qa_from_retriever(retriever)
@@ -1001,7 +1195,10 @@ if st.button("🔍 Search Database", type="primary"):
                 
             with st.spinner("🧠 Retrieving clinical context and generating answer..."):
                 t_search_start = time.time()
-                result, was_cached, elapsed = query_with_features(qa, q)
+                search_q = q_text
+                if st.session_state.get("query_filter"):
+                    search_q = f"In document '{st.session_state.query_filter}': {q_text}"
+                result, was_cached, elapsed = query_with_features(qa, search_q)
                 search_execution_time = time.time() - t_search_start
                 logger.info(f"Search execution completed in {search_execution_time:.2f}s")
                 
@@ -1016,18 +1213,56 @@ if st.button("🔍 Search Database", type="primary"):
                     
                 st.markdown(result.get("result", "").strip() if result.get("result") else "")
                 
-                st.subheader("📚 Sources Cited")
-                uniq = list({d.metadata.get("source", "unknown") for d in result.get("source_documents", [])})
-                if uniq:
-                    for s in uniq:
-                        st.write("📄", s)
+                # Group and format sources (Requirement 7)
+                from collections import defaultdict
+                sources_group = defaultdict(list)
+                for d in result.get("source_documents", []):
+                    source_name = d.metadata.get("source", "Unknown Document")
+                    page = d.metadata.get("page", None)
+                    chunk_id = d.metadata.get("chunk_id", None)
+                    sources_group[source_name].append((page, chunk_id))
+                    
+                if sources_group:
+                    st.markdown("### 📚 Sources")
+                    for source_name, chunks_info in sources_group.items():
+                        pages = [p for p, c in chunks_info if p is not None]
+                        chunks = [c for p, c in chunks_info if c is not None]
+                        
+                        pages_str = ""
+                        if pages:
+                            unique_pages = sorted(list(set(pages)))
+                            if len(unique_pages) == 1:
+                                pages_str = f"Page {unique_pages[0] + 1}"
+                              # Check if contiguous range
+                            elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
+                                pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
+                            else:
+                                pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
+                                
+                        chunks_str = ""
+                        if chunks:
+                            unique_chunks = sorted(list(set(chunks)))
+                            if len(unique_chunks) == 1:
+                                chunks_str = f"Chunk {unique_chunks[0]}"
+                            elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
+                                chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
+                            else:
+                                chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
+                                
+                        details = []
+                        if pages_str:
+                            details.append(pages_str)
+                        if chunks_str:
+                            details.append(chunks_str)
+                            
+                        details_str = f" ({', '.join(details)})" if details else ""
+                        st.write(f"📄 **{source_name}**{details_str}")
                 else:
                     st.caption("No explicit sources cited.")
                     
                 with st.expander("🔍 View Context Evidence Snippets"):
                     for i, d in enumerate(result.get("source_documents", [])[:6], 1):
                         st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
-                        # Display chunk score if available
                         score = d.metadata.get("score")
                         if score is not None:
                             st.caption(f"Cosine Similarity Score: `{score:.4f}` | Chunk ID: `{d.metadata.get('chunk_id')}`")
@@ -1045,40 +1280,95 @@ if st.button("🔍 Search Database", type="primary"):
                         if feedback:
                             st.info("Feedback recorded. Thank you!")
 
+# Close left main search area
 # ========================================
-# DOCUMENT MANAGEMENT PANEL (Requirement 9)
+# DOCUMENT MANAGEMENT PANEL (col_right)
 # ========================================
-st.markdown("---")
-st.header("🗄️ Document Management Portal")
-st.caption("Manage clinical documents stored on Cloudflare R2 and synced to the local FAISS index.")
-
-# Read metadata mapping database
-metadata = get_document_metadata()
-indexed_docs = metadata.get("documents", {})
-
-if indexed_docs:
-    st.markdown("### 📄 Indexed Documents")
-    for doc_id, doc in list(indexed_docs.items()):
-        # Draw document information container card
-        with st.container():
-            col_doc_info, col_doc_actions = st.columns([5, 1])
-            with col_doc_info:
-                st.markdown(f"📄 **{doc.get('filename')}**")
-                # Format size and timestamp
-                ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
-                size = doc.get("file_size_kb")
-                size_str = f"{size:.1f} KB" if size is not None else "Unknown size"
-                st.caption(f"📅 Uploaded: `{ts}` | 💾 Size: `{size_str}` | 🧩 Chunks: `{doc.get('chunk_count')}`")
-            with col_doc_actions:
-                # Add unique key to avoid Streamlit widget duplication
-                if st.button("🗑️ Delete", key=f"del_{doc_id}", help=f"Delete {doc.get('filename')} from index and R2"):
-                    delete_document_workflow(doc_id)
-            st.markdown("<hr style='margin: 10px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.05);'/>", unsafe_allow_html=True)
-else:
-    st.info("ℹ️ No documents indexed yet. Upload files in the sidebar uploader to begin.")
-
-# Admin Section
-with st.expander("🛠️ Administrative Controls"):
-    st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
-    if st.button("⚙️ Rebuild / Clear Index", type="secondary", help="Clear all documents and rebuild index"):
-        rebuild_empty_index_workflow()
+with col_right:
+    st.header("🗄️ Document Management")
+    st.caption("Manage clinical documents on Cloudflare R2.")
+    
+    # Read metadata mapping database
+    metadata = get_document_metadata()
+    indexed_docs = metadata.get("documents", {})
+    
+    # 3. Document Search (Requirement 3)
+    doc_search = st.text_input("🔍 Search Documents...", placeholder="Enter filename...", key="doc_search_input")
+    
+    # Filter documents by search string
+    filtered_docs = {}
+    if indexed_docs:
+        for doc_id, doc in indexed_docs.items():
+            if not doc_search.strip() or doc_search.lower() in doc.get("filename", "").lower():
+                filtered_docs[doc_id] = doc
+                
+    if filtered_docs:
+        # Render Table Headers
+        st.markdown("""
+        <div style='display: flex; font-weight: bold; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px; font-size: 0.85em; opacity: 0.9;'>
+            <div style='flex: 4; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>Document</div>
+            <div style='flex: 2; text-align: right;'>Size</div>
+            <div style='flex: 2; text-align: right;'>Chunks</div>
+            <div style='flex: 3; text-align: right; padding-right: 5px;'>Actions</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        for doc_id, doc in list(filtered_docs.items()):
+            doc_name = doc.get("filename")
+            ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
+            size = doc.get("file_size_kb")
+            
+            # Size formatting
+            if size is not None:
+                if size > 1024:
+                    size_str = f"{size/1024:.1f} MB"
+                else:
+                    size_str = f"{size:.0f} KB"
+            else:
+                size_str = "Unknown"
+                
+            # Table row using columns
+            r_col_name, r_col_size, r_col_chunks, r_col_act = st.columns([4, 2, 2, 3])
+            with r_col_name:
+                st.markdown(f"<span style='font-size: 0.8em; word-break: break-all; font-weight: 500;'>📄 {doc_name}</span>", unsafe_allow_html=True)
+            with r_col_size:
+                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{size_str}</div>", unsafe_allow_html=True)
+            with r_col_chunks:
+                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{doc.get('chunk_count')}</div>", unsafe_allow_html=True)
+            with r_col_act:
+                # Compact Popover Action Center (Requirement 2 & 9)
+                with st.popover("⚙️", key=f"pop_{doc_id}", help="Actions"):
+                    st.markdown(f"**Document Details**\n- **Uploaded**: `{ts}`\n- **Status**: `🟢 Indexed`")
+                    
+                    # Search within this document
+                    if st.button("🔍 Search within", key=f"search_{doc_id}", use_container_width=True):
+                        st.session_state.query_filter = doc_name
+                        st.session_state.query_input = f"What are the main findings in {doc_name}?"
+                        st.rerun()
+                        
+                    # Download button
+                    file_bytes = get_file_bytes(doc_name)
+                    st.download_button(
+                        label="📥 Download Original",
+                        data=file_bytes,
+                        file_name=doc_name,
+                        key=f"dl_{doc_id}",
+                        use_container_width=True
+                    )
+                    
+                    # Delete button (triggers confirmation dialog)
+                    if st.button("🗑️ Delete Document", key=f"del_{doc_id}", type="primary", use_container_width=True):
+                        confirm_delete_dialog(doc_id, doc_name)
+                        
+            st.markdown("<hr style='margin: 6px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
+    else:
+        if indexed_docs:
+            st.info("No matching documents found.")
+        else:
+            st.info("ℹ️ No documents indexed yet. Upload files in the sidebar to begin.")
+            
+    # Admin Controls
+    with st.expander("🛠️ Administrative Controls"):
+        st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
+        if st.button("⚙️ Rebuild / Clear Index", type="secondary", key="admin_rebuild_btn", help="Clear all documents and rebuild index", use_container_width=True):
+            rebuild_empty_index_workflow()

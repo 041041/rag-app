@@ -16,12 +16,22 @@ FAISS_INDEX_FILE = "index.faiss"
 METADATA_PKL_FILE = "metadata.pkl"
 DOCUMENT_METADATA_JSON_FILE = "document_metadata.json"
 
+# Helper to load from Streamlit Secrets defensively, falling back to Environment variables
+def get_secret(key: str, default: str = "") -> str:
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
 # Credentials and endpoints
-R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
-R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
-R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "")
-R2_ENDPOINT = os.getenv("R2_ENDPOINT", "")
+R2_ACCOUNT_ID = get_secret("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = get_secret("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = get_secret("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = get_secret("R2_BUCKET_NAME", "")
+R2_ENDPOINT = get_secret("R2_ENDPOINT", "")
 
 # Dynamically construct endpoint if not provided but account ID exists
 if not R2_ENDPOINT and R2_ACCOUNT_ID:

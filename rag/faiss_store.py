@@ -28,9 +28,12 @@ def get_embeddings_model():
     """
     Load the HuggingFace embedding model.
     """
+    print("Loading HuggingFace embeddings model (all-MiniLM-L6-v2)...", flush=True)
     if HuggingFaceEmbeddings is None:
         raise RuntimeError("HuggingFaceEmbeddings is not available in the environment.")
-    return HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
+    model = HuggingFaceEmbeddings(model_name=settings.EMBED_MODEL)
+    print("HuggingFace embeddings model loaded successfully.", flush=True)
+    return model
 
 class FAISSVectorStore(VectorStore):
     """

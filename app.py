@@ -1073,18 +1073,19 @@ st.markdown("""
         backdrop-filter: blur(10px);
         margin-bottom: 10px;
     }
-    .stButton>button {
-        background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
-        color: white;
-        border: none;
+    .stButton>button, .stDownloadButton>button, div[data-testid="stDownloadButton"]>button {
+        background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%) !important;
+        color: white !important;
+        border: none !important;
         padding: 10px 24px;
         font-weight: 600;
         border-radius: 8px;
         transition: all 0.3s ease;
     }
-    .stButton>button:hover {
+    .stButton>button:hover, .stDownloadButton>button:hover, div[data-testid="stDownloadButton"]>button:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        color: white !important;
     }
     .stAlert {
         border-radius: 8px;

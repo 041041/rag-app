@@ -1,0 +1,16 @@
+# Local vector indexes caches
+indexes/
+
+# Raw uploaded documents folder
+data/
+
+# Environment configurations
+.env
+
+# Python byte-code and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.DS_Store

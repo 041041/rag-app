@@ -32,6 +32,14 @@ from rag.faiss_store import FAISSVectorStore
 from rag.retrieval import VectorStoreRetrieverAdapter
 from rag.indexing import process_and_index_file, get_document_metadata, save_document_metadata
 
+try:
+    from langchain_core.messages import HumanMessage
+except ImportError:
+    try:
+        from langchain.schema import HumanMessage
+    except ImportError:
+        HumanMessage = None
+
 # Map GEMINI_API_KEY to GOOGLE_API_KEY if needed (LangChain defaults to GOOGLE_API_KEY)
 if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
@@ -265,10 +273,34 @@ class SimpleQAWrapper:
         last_err = None
         last_raw = None
 
-        # Prefer invoking with a plain string
+        # Prefer invoking with message structures (LangChain standard)
         inv_fn = getattr(self.llm, "invoke", None)
         if callable(inv_fn):
             try:
+                # 1. Try invoking with a list of HumanMessage (LangChain standard)
+                if HumanMessage is not None:
+                    try:
+                        raw = inv_fn([HumanMessage(content=prompt_text)])
+                        last_raw = raw
+                        if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
+                            return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
+                        text, raw_saved = _extract_text_from_llm_response(raw)
+                        return text, raw_saved, getattr(raw, "source_documents", None) or []
+                    except Exception as inner_e:
+                        logger.warning(f"⚠️ Invoke with HumanMessage failed: {inner_e}")
+
+                # 2. Try invoking with a list of message dicts (fallback)
+                try:
+                    raw = inv_fn([{"role": "user", "content": prompt_text}])
+                    last_raw = raw
+                    if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
+                        return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
+                    text, raw_saved = _extract_text_from_llm_response(raw)
+                    return text, raw_saved, getattr(raw, "source_documents", None) or []
+                except Exception as inner_e2:
+                    logger.warning(f"⚠️ Invoke with dict list failed: {inner_e2}")
+
+                # 3. Fallback to raw string invocation
                 raw = inv_fn(prompt_text)
                 last_raw = raw
                 if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):

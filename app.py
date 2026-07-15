@@ -270,37 +270,39 @@ class SimpleQAWrapper:
         return prompt_text, docs
 
     def _call_llm_variants(self, prompt_text: str):
-        last_err = None
         last_raw = None
+        errs = []
 
-        # Prefer invoking with message structures (LangChain standard)
+        # 1. Try invoke method
         inv_fn = getattr(self.llm, "invoke", None)
         if callable(inv_fn):
-            try:
-                # 1. Try invoking with a list of HumanMessage (LangChain standard)
-                if HumanMessage is not None:
-                    try:
-                        raw = inv_fn([HumanMessage(content=prompt_text)])
-                        last_raw = raw
-                        if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
-                            return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
-                        text, raw_saved = _extract_text_from_llm_response(raw)
-                        return text, raw_saved, getattr(raw, "source_documents", None) or []
-                    except Exception as inner_e:
-                        logger.warning(f"⚠️ Invoke with HumanMessage failed: {inner_e}")
-
-                # 2. Try invoking with a list of message dicts (fallback)
+            # A. Try invoking with a list of HumanMessage (LangChain standard)
+            if HumanMessage is not None:
                 try:
-                    raw = inv_fn([{"role": "user", "content": prompt_text}])
+                    raw = inv_fn([HumanMessage(content=prompt_text)])
                     last_raw = raw
                     if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
                         return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
                     text, raw_saved = _extract_text_from_llm_response(raw)
                     return text, raw_saved, getattr(raw, "source_documents", None) or []
-                except Exception as inner_e2:
-                    logger.warning(f"⚠️ Invoke with dict list failed: {inner_e2}")
+                except Exception as e:
+                    errs.append(f"invoke(HumanMessage) failed: {e}")
+            else:
+                errs.append("invoke(HumanMessage) skipped: HumanMessage is None")
 
-                # 3. Fallback to raw string invocation
+            # B. Try invoking with a list of message dicts (fallback)
+            try:
+                raw = inv_fn([{"role": "user", "content": prompt_text}])
+                last_raw = raw
+                if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
+                    return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
+                text, raw_saved = _extract_text_from_llm_response(raw)
+                return text, raw_saved, getattr(raw, "source_documents", None) or []
+            except Exception as e:
+                errs.append(f"invoke(DictList) failed: {e}")
+
+            # C. Try invoking with raw string (fallback)
+            try:
                 raw = inv_fn(prompt_text)
                 last_raw = raw
                 if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
@@ -308,9 +310,9 @@ class SimpleQAWrapper:
                 text, raw_saved = _extract_text_from_llm_response(raw)
                 return text, raw_saved, getattr(raw, "source_documents", None) or []
             except Exception as e:
-                last_err = e
+                errs.append(f"invoke(RawString) failed: {e}")
 
-        # Try generate with list-of-dicts
+        # 2. Try generate method with list-of-dicts
         gen_fn = getattr(self.llm, "generate", None)
         if callable(gen_fn):
             try:
@@ -319,9 +321,9 @@ class SimpleQAWrapper:
                 text, raw_saved = _extract_text_from_llm_response(raw)
                 return text, raw_saved, getattr(raw, "source_documents", None) or []
             except Exception as e:
-                last_err = e
+                errs.append(f"generate() failed: {e}")
 
-        # Other callables
+        # 3. Other callables
         for name in ("predict", "create", "chat", "respond", "answer"):
             fn = getattr(self.llm, name, None)
             if not callable(fn):
@@ -332,12 +334,13 @@ class SimpleQAWrapper:
                 text, raw_saved = _extract_text_from_llm_response(raw)
                 return text, raw_saved, getattr(raw, "source_documents", None) or []
             except Exception as e:
-                last_err = e
+                errs.append(f"llm.{name}() failed: {e}")
                 continue
 
         raw_type = type(last_raw).__name__ if last_raw is not None else "None"
         raw_preview = repr(last_raw)[:1000] if last_raw is not None else "<no raw captured>"
-        raise RuntimeError(f"No callable LLM methods succeeded. last_err: {last_err} | last_raw_type: {raw_type} | last_raw_preview: {raw_preview}")
+        detailed_errors = " | ".join(errs)
+        raise RuntimeError(f"No LLM invocation succeeded. Errors: {detailed_errors} | raw_type: {raw_type} | raw_preview: {raw_preview}")
 
     def run(self, query: str):
         prompt_text, docs = self._build_input(query)

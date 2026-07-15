@@ -1978,83 +1978,66 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
     was_cached = st.session_state.get("last_was_cached", False)
     elapsed = st.session_state.get("last_elapsed", 0.0)
     
-    # Render results inside a modern container card (Requirement 5 & 7 & 9)
+    # Group sources first so counts are available throughout
+    from collections import defaultdict
+    sources_group = defaultdict(list)
+    for d in result.get("source_documents", []):
+        source_name = d.metadata.get("source", "Unknown Document")
+        page = d.metadata.get("page", None)
+        chunk_id = d.metadata.get("chunk_id", None)
+        sources_group[source_name].append((page, chunk_id))
+
+    num_sources = len(sources_group)
+    source_label = "Source" if num_sources == 1 else "Sources"
+    doc_label   = "Document" if num_sources == 1 else "Documents"
+
+    # ── 1. AI Answer ──────────────────────────────────────────────────────
     with st.container(border=True):
         st.subheader("✨ AI Answer")
         st.markdown(result.get("result", "").strip() if result.get("result") else "")
-        
-        # Group and format sources
-        from collections import defaultdict
-        sources_group = defaultdict(list)
-        for d in result.get("source_documents", []):
-            source_name = d.metadata.get("source", "Unknown Document")
-            page = d.metadata.get("page", None)
-            chunk_id = d.metadata.get("chunk_id", None)
-            sources_group[source_name].append((page, chunk_id))
-            
+
+        # ── 2. Sources ────────────────────────────────────────────────────
         if sources_group:
             st.markdown("---")
             st.markdown("#### 📄 Sources")
             for source_name, chunks_info in sources_group.items():
                 pages = [p for p, c in chunks_info if p is not None]
-                chunks = [c for p, c in chunks_info if c is not None]
-                
-                pages_str = ""
-                if pages:
-                    unique_pages = sorted(list(set(pages)))
-                    if len(unique_pages) == 1:
-                        pages_str = f"Page {unique_pages[0] + 1}"
-                    elif unique_pages[-1] - unique_pages[0] == len(unique_pages) - 1:
-                        pages_str = f"Pages {unique_pages[0] + 1}-{unique_pages[-1] + 1}"
-                    else:
-                        pages_str = f"Pages " + ", ".join(str(p + 1) for p in unique_pages)
-                        
-                chunks_str = ""
-                if chunks:
-                    unique_chunks = sorted(list(set(chunks)))
-                    if len(unique_chunks) == 1:
-                        chunks_str = f"Chunk {unique_chunks[0]}"
-                    elif unique_chunks[-1] - unique_chunks[0] == len(unique_chunks) - 1:
-                        chunks_str = f"Chunks {unique_chunks[0]}-{unique_chunks[-1]}"
-                    else:
-                        chunks_str = f"Chunks " + ", ".join(str(c) for c in unique_chunks)
-                        
-                details = []
-                if pages_str:
-                    details.append(pages_str)
-                if chunks_str:
-                    details.append(chunks_str)
-                    
-                details_str = f" ({', '.join(details)})" if details else ""
-                st.write(f"📄 **{source_name}**{details_str}")
-        
-        # Render compact horizontal metadata card (Requirement 6)
-        num_docs_used = len(sources_group)
-        num_chunks_retrieved = len(result.get("source_documents", []))
-        
+                unique_pages = sorted(set(pages)) if pages else []
+
+                st.markdown(f"📄 **{source_name}**")
+                if unique_pages:
+                    pages_display = ", ".join(str(p + 1) for p in unique_pages)
+                    pg_label = "Page" if len(unique_pages) == 1 else "Pages"
+                    st.caption(f"{pg_label}: {pages_display}")
+
+        # ── 3. Summary Bar (no Chunks) ────────────────────────────────────
         st.markdown(f"""
-        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 15px; margin-top: 15px; font-size: 0.9em; opacity: 0.9; display: flex; justify-content: space-around; align-items: center;'>
+        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 10px 20px; margin-top: 15px; font-size: 0.9em; opacity: 0.9; display: flex; gap: 32px; align-items: center;'>
             <span>⏱️ <strong>{elapsed:.2f} sec</strong></span>
-            <span>📄 <strong>{num_docs_used} Sources</strong></span>
-            <span>🧩 <strong>{num_chunks_retrieved} Chunks</strong></span>
-            <span>📚 <strong>{num_docs_used} Documents</strong></span>
+            <span>📄 <strong>{num_sources} {source_label}</strong></span>
+            <span>📚 <strong>{num_sources} {doc_label}</strong></span>
         </div>
         """, unsafe_allow_html=True)
-            
-    # Collapsible Context Evidence block
+
+    # ── 4. Collapsible Evidence — full technical details kept here ─────────
     with st.expander("🔍 View Context Evidence Snippets"):
         for i, d in enumerate(result.get("source_documents", [])[:6], 1):
-            st.markdown(f"**{i}. {d.metadata.get('source','unknown')}**")
-            score = d.metadata.get("score")
+            src      = d.metadata.get("source", "unknown")
+            page     = d.metadata.get("page")
+            chunk_id = d.metadata.get("chunk_id")
+            score    = d.metadata.get("score")
+            page_str = f" · Page {page + 1}" if page is not None else ""
+            st.markdown(f"**{i}. {src}**{page_str}")
             if score is not None:
-                st.caption(f"Cosine Similarity Score: `{score:.4f}` | Chunk ID: `{d.metadata.get('chunk_id')}`")
-            st.text(d.page_content[:400].replace('\n', ' '))
+                st.caption(f"Similarity Score: `{score:.4f}` | Chunk ID: `{chunk_id}`")
+            st.text(d.page_content[:400].replace("\n", " "))
             st.markdown("---")
-            
+
+    # ── 5. Feedback ───────────────────────────────────────────────────────
     st.markdown("### Was this helpful?")
     col_f1, col_f2, col_f3 = st.columns([1, 1, 4])
     with col_f1:
-        if st.button("👍 Yes"):
+        if st.button("👍 Yes", key="feedback_yes_btn"):
             st.success("Thanks for your feedback!")
     with col_f2:
         if st.button("👎 No"):

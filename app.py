@@ -698,6 +698,19 @@ def confirm_delete_dialog(doc_id: str, filename: str):
                 st.session_state.selected_detail_doc = None
             st.rerun()
 
+def toggle_select_all_callback(page_filenames, page_doc_ids):
+    val = st.session_state.hdr_select_all
+    if val:
+        for f in page_filenames:
+            st.session_state.selected_docs.add(f)
+        for d_id in page_doc_ids:
+            st.session_state[f"chk_{d_id}"] = True
+    else:
+        for f in page_filenames:
+            st.session_state.selected_docs.discard(f)
+        for d_id in page_doc_ids:
+            st.session_state[f"chk_{d_id}"] = False
+
 @st.dialog("🗄️ Document Management Portal", width="large")
 def document_management_dialog():
     """
@@ -744,9 +757,8 @@ def document_management_dialog():
                 st.rerun()
         return
 
-    # Header with increased contrast and subtitle (Requirement 6)
-    st.markdown("<h2 style='color: #ffffff !important; font-weight: 800 !important; font-size: 1.8em !important; margin-bottom: 2px; padding-bottom: 0;'>🗄️ Document Management Portal</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #94a3b8 !important; font-size: 0.9em !important; margin-top: 0; margin-bottom: 15px;'>Manage uploaded clinical documents.</p>", unsafe_allow_html=True)
+    # Header with subtitle only (auto-rendered dialog title has priority)
+    st.markdown("<p style='color: #94a3b8 !important; font-size: 0.9em !important; margin-top: -12px; margin-bottom: 15px;'>Manage uploaded clinical documents.</p>", unsafe_allow_html=True)
     
     # Render simplified filter controls with File Type dropdown (Requirement 3 & 7)
     col_f1, col_f2, col_f3, col_f4 = st.columns([40, 20, 20, 20])
@@ -845,26 +857,22 @@ def document_management_dialog():
                 )
             st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
                     
-        # Table Headers with Select All checkbox inside header (Requirement 10 & 9)
+        # Table Headers with Select All callback inside header (Requirement 10 & 9)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
+        page_doc_ids = [doc_id for doc_id, doc in page_docs]
+        
         all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
         st.session_state["hdr_select_all"] = all_selected
         
         col_hdr_chk, col_hdr_name, col_hdr_status, col_hdr_size = st.columns([1, 6, 2.5, 2.5])
         with col_hdr_chk:
-            select_all = st.checkbox("", value=all_selected, key="hdr_select_all", label_visibility="collapsed")
-            if select_all != all_selected:
-                if select_all:
-                    for f in page_docs_filenames:
-                        st.session_state.selected_docs.add(f)
-                    for doc_id, doc in page_docs:
-                        st.session_state[f"chk_{doc_id}"] = True
-                else:
-                    for f in page_docs_filenames:
-                        st.session_state.selected_docs.discard(f)
-                    for doc_id, doc in page_docs:
-                        st.session_state[f"chk_{doc_id}"] = False
-                st.rerun()
+            st.checkbox(
+                "",
+                key="hdr_select_all",
+                label_visibility="collapsed",
+                on_change=toggle_select_all_callback,
+                args=(page_docs_filenames, page_doc_ids)
+            )
         with col_hdr_name:
             st.markdown("<span style='font-weight: bold; font-size: 0.9em; opacity: 0.9;'>Document</span>", unsafe_allow_html=True)
         with col_hdr_status:
@@ -1450,21 +1458,20 @@ st.markdown("""
         text-decoration: underline !important;
     }
     /* Increase visibility and typography hierarchy of dialog title */
-    div[role="dialog"] [data-testid="stHeading"] h2, 
-    div[role="dialog"] h2 {
-        color: #f8fafc !important;
-        font-size: 2.2em !important;
+    [data-testid="stDialog"] [data-testid="stHeading"] h2, 
+    [data-testid="stDialog"] h2 {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-size: 1.6em !important;
         font-weight: 800 !important;
-        letter-spacing: -0.025em !important;
-        background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-top: 10px !important;
-        margin-bottom: 5px !important;
+        opacity: 1 !important;
+        background: none !important;
+        margin-top: 5px !important;
+        margin-bottom: 2px !important;
     }
     
     /* Pagination controls (Previous and Next secondary buttons inside dialog) */
-    div[role="dialog"] button[data-basebuttonstyle="secondary"] {
+    [data-testid="stDialog"] .stButton button[data-basebuttonstyle="secondary"] {
         background: #334155 !important;
         background-color: #334155 !important;
         color: #f1f5f9 !important;
@@ -1481,14 +1488,38 @@ st.markdown("""
         overflow: hidden !important;
         text-overflow: ellipsis !important;
     }
-    div[role="dialog"] button[data-basebuttonstyle="secondary"]:hover {
+    [data-testid="stDialog"] .stButton button[data-basebuttonstyle="secondary"]:hover {
         background: #475569 !important;
         background-color: #475569 !important;
         color: #ffffff !important;
     }
 
+    /* Primary buttons (Delete, Close) inside dialog modal */
+    [data-testid="stDialog"] .stButton button[data-basebuttonstyle="primary"],
+    [data-testid="stDialog"] .stDownloadButton button,
+    [data-testid="stDialog"] div[data-testid="stDownloadButton"] button {
+        background: #0284c7 !important;
+        background-color: #0284c7 !important;
+        color: white !important;
+        border: none !important;
+        box-shadow: none !important;
+        height: 28px !important;
+        line-height: 28px !important;
+        padding: 0 12px !important;
+        font-size: 0.85em !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    [data-testid="stDialog"] .stButton button[data-basebuttonstyle="primary"]:hover,
+    [data-testid="stDialog"] .stDownloadButton button:hover,
+    [data-testid="stDialog"] div[data-testid="stDownloadButton"] button:hover {
+        background: #0369a1 !important;
+        background-color: #0369a1 !important;
+    }
+
     /* Filename buttons inside the table rows: transparent, cyan/blue color */
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button {
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button {
         background: transparent !important;
         background-color: transparent !important;
         border: none !important;
@@ -1499,14 +1530,14 @@ st.markdown("""
         font-weight: 600 !important;
         box-shadow: none !important;
     }
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button:hover {
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button:hover {
         color: #0284c7 !important;
         text-decoration: underline !important;
     }
 
     /* Status and Size buttons inside the table rows: transparent, centered text */
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button {
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button,
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button {
         background: transparent !important;
         background-color: transparent !important;
         border: none !important;
@@ -1516,8 +1547,8 @@ st.markdown("""
         font-weight: 400 !important;
         box-shadow: none !important;
     }
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button:hover,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button:hover {
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button:hover,
+    [data-testid="stDialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button:hover {
         color: #38bdf8 !important;
         background-color: rgba(255, 255, 255, 0.05) !important;
         text-decoration: underline !important;

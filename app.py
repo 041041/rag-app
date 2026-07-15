@@ -784,20 +784,17 @@ def document_management_dialog():
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
     
-    # Layout splits (Table / Details)
     col_table, col_details = st.columns([7, 5])
-    
     with col_table:
-        # Floating Bulk Action Toolbar (Requirement 6)
+        # Floating Bulk Action Toolbar (Requirement 5, 6, 7)
         if len(st.session_state.selected_docs) > 0:
             selected_count = len(st.session_state.selected_docs)
-            st.markdown(f"""
-            <div style='background-color: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 6px 12px; margin-bottom: 10px;'>
-                <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>📄 {selected_count} Documents Selected</span>
-            </div>
-            """, unsafe_allow_html=True)
+            sel_label = f"📄 {selected_count} Document Selected" if selected_count == 1 else f"📄 {selected_count} Documents Selected"
             
-            col_b1, col_b2, col_b3, col_b4 = st.columns([1, 1.2, 1.1, 1.4])
+            # Render compact toolbar in a single horizontal row (Requirement 5)
+            col_b_sel, col_b1, col_b2, col_b3, col_b4 = st.columns([2.8, 1.2, 1.2, 1.2, 1.2])
+            with col_b_sel:
+                st.markdown(f"<p style='font-size: 0.9em; font-weight: 700; color: #38bdf8; margin-top: 6px; margin-bottom: 0;'>{sel_label}</p>", unsafe_allow_html=True)
             with col_b1:
                 if st.button("🗑 Delete", type="primary", key="bulk_delete_action_btn", use_container_width=True):
                     selected_ids = []
@@ -835,9 +832,13 @@ def document_management_dialog():
                     st.success("Re-indexed!")
                     st.rerun()
             with col_b4:
-                if st.button("✖ Clear Selection", key="bulk_clear_action_btn", use_container_width=True):
+                if st.button("✖ Clear", key="bulk_clear_action_btn", use_container_width=True):
                     st.session_state.selected_docs.clear()
+                    for k in list(st.session_state.keys()):
+                        if k.startswith("chk_"):
+                            st.session_state[k] = False
                     st.rerun()
+            st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
                     
         # Table Headers with Select All (Requirement 8)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
@@ -845,7 +846,8 @@ def document_management_dialog():
         
         col_hdr_chk, col_hdr_status, col_hdr_size, col_hdr_chunks = st.columns([6, 2, 2, 2])
         with col_hdr_chk:
-            select_all = st.checkbox("Select All", value=all_selected, key="select_all_chk")
+            # Removed standard widget key to prevent state caching conflicts
+            select_all = st.checkbox("Select All", value=all_selected)
             if select_all != all_selected:
                 if select_all:
                     for f in page_docs_filenames:
@@ -853,14 +855,14 @@ def document_management_dialog():
                 else:
                     for f in page_docs_filenames:
                         st.session_state.selected_docs.discard(f)
-                # No manual st.rerun() to prevent unnecessary double reruns!
+                st.rerun()
                 
         st.markdown("""
         <div style='display: flex; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 4px; margin-bottom: 6px; font-size: 0.8em; opacity: 0.9;'>
             <div style='flex: 6;'>Document</div>
-            <div style='flex: 2; text-align: right;'>Status</div>
-            <div style='flex: 2; text-align: right;'>Size</div>
-            <div style='flex: 2; text-align: right; padding-right: 5px;'>Chunks</div>
+            <div style='flex: 2; text-align: center;'>Status</div>
+            <div style='flex: 2; text-align: center;'>Size</div>
+            <div style='flex: 2; text-align: center; padding-right: 5px;'>Chunks</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -884,6 +886,13 @@ def document_management_dialog():
                 chunks_count = doc.get("chunk_count", 0)
                 chunks_str = f"{chunks_count} Chunks"
                 
+                # Highlight active row in table via filename pointer (Requirement 10)
+                is_active = False
+                selected_detail_doc = st.session_state.get("selected_detail_doc")
+                if selected_detail_doc and selected_detail_doc.get("filename") == doc_name:
+                    is_active = True
+                doc_display_name = f"👉 📄 {doc_name}" if is_active else f"📄 {doc_name}"
+                
                 col_row_chk, col_row_name, col_row_status, col_row_size, col_row_chunks = st.columns([1, 5, 2, 2, 2])
                 with col_row_chk:
                     doc_checked = st.checkbox("", value=(doc_name in st.session_state.selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
@@ -892,10 +901,10 @@ def document_management_dialog():
                             st.session_state.selected_docs.add(doc_name)
                         else:
                             st.session_state.selected_docs.discard(doc_name)
-                        # No manual st.rerun() to prevent double execution refresh bugs!
+                        # Explicitly rerun to propagate parent page scope updates immediately (Requirement 1 & 11)
+                        st.rerun()
                 with col_row_name:
-                    # Row clicks (name, status, size, chunks) load details (Requirement 5 & 8)
-                    if st.button(f"📄 {doc_name}", key=f"btn_detail_name_{doc_id}", use_container_width=True):
+                    if st.button(doc_display_name, key=f"btn_detail_name_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                         st.rerun()
                 with col_row_status:
@@ -913,11 +922,11 @@ def document_management_dialog():
                     
                 st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
                 
-            # Pagination Controls (Requirement 7 & 9)
+            # Centered Pagination Controls (Requirement 9)
             st.markdown("<br/>", unsafe_allow_html=True)
-            col_p1, col_p2, col_p3, col_p4 = st.columns([3, 1, 1, 1])
+            col_p_space1, col_p1, col_p2, col_p3, col_p_space2 = st.columns([1.5, 4, 1.5, 1.5, 1.5])
             with col_p1:
-                st.markdown(f"<span style='font-size: 0.8em; opacity: 0.85;'>Showing **{start_index + 1}–{end_index}** of **{total_documents}** Documents</span>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size: 0.8em; opacity: 0.85; margin-top: 8px;'>Showing **{start_index + 1}–{end_index}** of **{total_documents}** Documents</p>", unsafe_allow_html=True)
             with col_p2:
                 if st.button("Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
                     st.session_state.doc_page = max(1, current_page - 1)
@@ -926,7 +935,7 @@ def document_management_dialog():
                 if st.button("Next", disabled=(current_page >= num_pages), key="btn_page_next", use_container_width=True):
                     st.session_state.doc_page = min(num_pages, current_page + 1)
                     st.rerun()
-            with col_p4:
+            with col_p_space2:
                 page_sel = st.selectbox("Page", list(range(1, num_pages + 1)), index=current_page - 1, label_visibility="collapsed", key="page_sel_box")
                 if page_sel != current_page:
                     st.session_state.doc_page = page_sel
@@ -1013,6 +1022,13 @@ def sync_index_if_version_changed():
     """
     if "health_status" not in st.session_state or not st.session_state.health_status.get("r2_connected"):
         return
+        
+    import time
+    curr_time = time.time()
+    last_check = st.session_state.get("last_r2_sync_check_time", 0.0)
+    if curr_time - last_check < 60.0:
+        return
+    st.session_state.last_r2_sync_check_time = curr_time
         
     print("🔄 Checking if remote R2 index version changed...", flush=True)
     try:
@@ -1459,6 +1475,20 @@ st.markdown("""
         color: #38bdf8 !important;
         text-decoration: underline !important;
     }
+    /* Increase visibility and typography hierarchy of dialog title */
+    div[role="dialog"] [data-testid="stHeading"] h2, 
+    div[role="dialog"] h2 {
+        color: #f8fafc !important;
+        font-size: 2.2em !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.025em !important;
+        background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-top: 10px !important;
+        margin-bottom: 5px !important;
+    }
+    
     /* Style all secondary buttons inside the document portal table as clean row links */
     div[role="dialog"] button[data-basebuttonstyle="secondary"] {
         background-color: transparent !important;
@@ -1466,24 +1496,39 @@ st.markdown("""
         color: #f1f5f9 !important;
         text-align: left !important;
         justify-content: flex-start !important;
-        padding: 4px 8px !important;
-        font-size: 0.9em !important;
+        padding: 2px 6px !important;
+        font-size: 0.85em !important;
+        line-height: 1.2 !important;
         transition: all 0.2s ease !important;
         width: 100% !important;
+        height: 28px !important;
     }
     div[role="dialog"] button[data-basebuttonstyle="secondary"]:hover {
         color: #38bdf8 !important;
         background-color: rgba(255, 255, 255, 0.05) !important;
     }
-    /* Right align buttons inside the 3rd and 4th columns of the row */
+    
+    /* Center align buttons inside the 3rd, 4th, and 5th columns (Status, Size, Chunks) */
     div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button {
-        text-align: right !important;
-        justify-content: flex-end !important;
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(5) button {
+        text-align: center !important;
+        justify-content: center !important;
+        margin: 0 auto !important;
     }
+    
     /* Make document column alignment compact like a list directory (Google Drive style) */
     div[role="dialog"] div[data-testid="column"] {
-        padding: 2px !important;
+        padding: 1px !important;
+    }
+    
+    /* Vertically center checkbox column contents */
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        height: 100% !important;
+        padding-top: 4px !important;
     }
 </style>
 """, unsafe_allow_html=True)

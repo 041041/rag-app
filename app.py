@@ -774,22 +774,19 @@ def document_management_dialog():
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
     
-    # Layout splits (Table / Details)
     col_table, col_details = st.columns([7, 5])
     
     with col_table:
-        # Floating Bulk Action Toolbar (Requirement 3)
+        # Floating Bulk Action Toolbar (Requirement 3 & 6)
         if len(st.session_state.selected_docs) > 0:
             selected_count = len(st.session_state.selected_docs)
             st.markdown(f"""
-            <div style='background-color: rgba(30, 41, 59, 0.95); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 10px; margin-bottom: 12px;'>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>💎 {selected_count} Documents Selected</span>
-                </div>
+            <div style='background-color: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 6px 12px; margin-bottom: 10px;'>
+                <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>☑ {selected_count} Selected</span>
             </div>
             """, unsafe_allow_html=True)
             
-            col_b1, col_b2, col_b3, col_b4 = st.columns([1, 1.4, 1.1, 1.3])
+            col_b1, col_b2, col_b3, col_b4 = st.columns([1, 1.2, 1.1, 1.4])
             with col_b1:
                 if st.button("🗑 Delete", type="primary", key="bulk_delete_action_btn", use_container_width=True):
                     selected_ids = []
@@ -824,14 +821,14 @@ def document_management_dialog():
                             file_bytes = get_file_bytes(doc_name)
                             if file_bytes:
                                 process_and_index_file(doc_name, file_bytes, st.session_state.vector_store)
-                    st.success("Re-indexed successfully!")
+                    st.success("Re-indexed!")
                     st.rerun()
             with col_b4:
-                if st.button("❌ Clear", key="bulk_clear_action_btn", use_container_width=True):
+                if st.button("✖ Clear Selection", key="bulk_clear_action_btn", use_container_width=True):
                     st.session_state.selected_docs.clear()
                     st.rerun()
                     
-        # Table Headers with Select All
+        # Table Headers with Select All (Requirement 8)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
         all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
         
@@ -845,10 +842,10 @@ def document_management_dialog():
                 else:
                     for f in page_docs_filenames:
                         st.session_state.selected_docs.discard(f)
-                st.rerun()
+                # No manual st.rerun() to prevent unnecessary double reruns!
                 
         st.markdown("""
-        <div style='display: flex; font-weight: bold; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px; font-size: 0.85em; opacity: 0.9;'>
+        <div style='display: flex; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 4px; margin-bottom: 6px; font-size: 0.8em; opacity: 0.9;'>
             <div style='flex: 6;'>Document</div>
             <div style='flex: 3; text-align: right;'>Size</div>
             <div style='flex: 3; text-align: right; padding-right: 5px;'>Chunks</div>
@@ -872,18 +869,22 @@ def document_management_dialog():
                             st.session_state.selected_docs.add(doc_name)
                         else:
                             st.session_state.selected_docs.discard(doc_name)
-                        st.rerun()
+                        # No manual st.rerun() to prevent double execution refresh bugs!
                 with col_row_name:
-                    # Row click loads details
-                    if st.button(f"📄 {doc_name}", key=f"btn_detail_{doc_id}", use_container_width=True):
+                    # Row clicks (name, size, chunks) load details (Requirement 5 & 8)
+                    if st.button(f"📄 {doc_name}", key=f"btn_detail_name_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                         st.rerun()
                 with col_row_size:
-                    st.markdown(f"<div style='text-align: right; font-size: 0.85em; opacity: 0.8; padding-top: 6px;'>{size_str}</div>", unsafe_allow_html=True)
+                    if st.button(f"{size_str}", key=f"btn_detail_size_{doc_id}", use_container_width=True):
+                        st.session_state.selected_detail_doc = doc
+                        st.rerun()
                 with col_row_chunks:
-                    st.markdown(f"<div style='text-align: right; font-size: 0.85em; opacity: 0.8; padding-top: 6px;'>{doc.get('chunk_count', 0)}</div>", unsafe_allow_html=True)
+                    if st.button(f"{doc.get('chunk_count', 0)}", key=f"btn_detail_chunks_{doc_id}", use_container_width=True):
+                        st.session_state.selected_detail_doc = doc
+                        st.rerun()
                     
-                st.markdown("<hr style='margin: 4px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
                 
             # Pagination Controls (Requirement 7)
             st.markdown("<br/>", unsafe_allow_html=True)
@@ -1420,6 +1421,32 @@ st.markdown("""
         color: #38bdf8 !important;
         text-decoration: underline !important;
     }
+    /* Style all secondary buttons inside the document portal table as clean row links */
+    div[role="dialog"] button[data-basebuttonstyle="secondary"] {
+        background-color: transparent !important;
+        border: none !important;
+        color: #f1f5f9 !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        padding: 4px 8px !important;
+        font-size: 0.9em !important;
+        transition: all 0.2s ease !important;
+        width: 100% !important;
+    }
+    div[role="dialog"] button[data-basebuttonstyle="secondary"]:hover {
+        color: #38bdf8 !important;
+        background-color: rgba(255, 255, 255, 0.05) !important;
+    }
+    /* Right align buttons inside the 3rd and 4th columns of the row */
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button {
+        text-align: right !important;
+        justify-content: flex-end !important;
+    }
+    /* Make document column alignment compact like a list directory (Google Drive style) */
+    div[role="dialog"] div[data-testid="column"] {
+        padding: 2px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1586,12 +1613,61 @@ q = st.text_area(
     label_visibility="collapsed"
 )
 
-# Search Scope display below search textbox (Search Box section)
+# Focus & Enter-Key Submission Javascript helper (Requirement 3)
+st.markdown("""
+<script>
+function setupSearchTextarea() {
+    const textareas = window.parent.document.querySelectorAll('textarea');
+    for (const t of textareas) {
+        if (t.placeholder && t.placeholder.includes("Ask anything")) {
+            // Set focus
+            if (window.parent.document.activeElement !== t) {
+                t.focus();
+                t.setSelectionRange(t.value.length, t.value.length);
+            }
+            
+            // Add Enter Key listener (prevent newline, trigger submit button)
+            if (!t.dataset.enterListenerAdded) {
+                t.dataset.enterListenerAdded = "true";
+                t.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        // Find the Primary Ask AI button
+                        const buttons = window.parent.document.querySelectorAll('button');
+                        for (const b of buttons) {
+                            if (b.innerText && b.innerText.includes("Ask AI")) {
+                                b.click();
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+    
+    // Prevent Enter key from triggering submit on anything except the main search textarea
+    if (!window.parent.document.dataset.formPreventAdded) {
+        window.parent.document.dataset.formPreventAdded = "true";
+        window.parent.document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                const active = window.parent.document.activeElement;
+                if (active && active.tagName !== 'TEXTAREA') {
+                    e.stopPropagation();
+                }
+            }
+        }, true);
+    }
+}
+setTimeout(setupSearchTextarea, 200);
+</script>
+""", unsafe_allow_html=True)
+
+# Search Scope display above search textbox (Search Box section)
 selected_docs_list = list(st.session_state.get("selected_docs", set()))
 if len(selected_docs_list) == 0:
     st.markdown("""
-    <p style='font-size: 0.85em; opacity: 0.8; margin-top: 5px; margin-bottom: 2px; font-weight: 600;'>Search Scope</p>
-    <div style='font-size: 0.9em; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05);'>
+    <div style='font-size: 0.85em; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 8px;'>
         🌍 Searching All Documents
     </div>
     """, unsafe_allow_html=True)
@@ -1599,13 +1675,11 @@ else:
     col_scope_b, col_scope_c = st.columns([5, 2.5])
     with col_scope_b:
         st.markdown(f"""
-        <p style='font-size: 0.85em; opacity: 0.8; margin-top: 5px; margin-bottom: 2px; font-weight: 600;'>Search Scope</p>
-        <div style='font-size: 0.9em; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8;'>
+        <div style='font-size: 0.85em; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; margin-bottom: 8px;'>
             📄 Searching {len(selected_docs_list)} Selected Documents
         </div>
         """, unsafe_allow_html=True)
     with col_scope_c:
-        st.markdown("<div style='height: 22px;'></div>", unsafe_allow_html=True)
         if st.button("❌ Clear Selection", key="clear_selection_search_scope_btn", use_container_width=True):
             st.session_state.selected_docs.clear()
             st.rerun()

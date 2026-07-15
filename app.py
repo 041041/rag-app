@@ -825,14 +825,68 @@ def document_management_dialog():
         col_details = None
         
     with col_table:
-        # Compact Bulk Action Toolbar (Requirement 8)
+        # Compact Bulk Action Toolbar — always visible, enabled only when selection exists
         is_selected = len(st.session_state.selected_docs) > 0
-        col_b1, col_b2 = st.columns([6, 6])
+        st.markdown("""
+        <style>
+        /* ── Dialog-level overrides ────────────────────────── */
+        /* Strip ALL dialog secondary buttons to slate style */
+        [data-testid="stDialog"] button {
+            border-radius: 5px !important;
+            font-size: 0.82em !important;
+            font-weight: 500 !important;
+            height: 30px !important;
+            line-height: 30px !important;
+            white-space: nowrap !important;
+        }
+        /* Filename row buttons — transparent, left-aligned link appearance */
+        [data-testid="stDialog"] [data-testid="stButton"] button {
+            background: transparent !important;
+            background-image: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #e2e8f0 !important;
+            text-align: left !important;
+            justify-content: flex-start !important;
+            padding: 2px 4px !important;
+            font-weight: 500 !important;
+        }
+        [data-testid="stDialog"] [data-testid="stButton"] button:hover {
+            background: rgba(255,255,255,0.06) !important;
+            color: #7dd3fc !important;
+        }
+        /* Toolbar action buttons — keep primary style but compact */
+        [data-testid="stDialog"] [data-testid="stButton"]:has(button[data-basebuttonstyle="primary"]) button {
+            background: #1d4ed8 !important;
+            background-image: none !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: 5px !important;
+        }
+        [data-testid="stDialog"] [data-testid="stButton"]:has(button[data-basebuttonstyle="primary"]) button:hover {
+            background: #1e40af !important;
+        }
+        /* Download button inside dialog */
+        [data-testid="stDialog"] [data-testid="stDownloadButton"] button {
+            background: #0f766e !important;
+            background-image: none !important;
+            color: white !important;
+            border: none !important;
+        }
+        [data-testid="stDialog"] [data-testid="stDownloadButton"] button:hover {
+            background: #0d9488 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        col_b1, col_b2 = st.columns(2)
         with col_b1:
-            if st.button("🗑 Delete Selected", type="primary", key="bulk_delete_action_btn", use_container_width=True, disabled=not is_selected):
+            if st.button("🗑 Delete Selected", type="primary",
+                         key="bulk_delete_action_btn",
+                         use_container_width=True,
+                         disabled=not is_selected):
                 st.session_state.show_bulk_delete_confirm = True
         with col_b2:
-            # Zip and Download selected documents
             selected_names_list = list(st.session_state.selected_docs)
             zip_buffer = io.BytesIO()
             if is_selected:
@@ -842,7 +896,6 @@ def document_management_dialog():
                         if file_bytes:
                             zip_file.writestr(doc_name, file_bytes)
             zip_data = zip_buffer.getvalue()
-            
             st.download_button(
                 label="⬇ Download Selected",
                 data=zip_data,
@@ -851,9 +904,9 @@ def document_management_dialog():
                 use_container_width=True,
                 disabled=not is_selected
             )
-        st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
-                    
-        # Table Headers with Select All callback inside header (Requirement 10 & 9)
+        st.markdown("<hr style='margin: 8px 0; border:0; border-top:1px solid rgba(255,255,255,0.06);'/>", unsafe_allow_html=True)
+
+        # Table Headers with Select All callback inside header
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
         page_doc_ids = [doc_id for doc_id, doc in page_docs]
         
@@ -900,16 +953,23 @@ def document_management_dialog():
                         else:
                             st.session_state.selected_docs.discard(doc_name)
                 with col_row_name:
+                    # Filename — only this cell is a button (opens details panel)
+                    row_bg = "rgba(255,255,255,0.04)" if is_active else "transparent"
                     if st.button(doc_display_name, key=f"btn_detail_name_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                 with col_row_status:
-                    if st.button(f"{status_str}", key=f"btn_detail_status_{doc_id}", use_container_width=True):
-                        st.session_state.selected_detail_doc = doc
+                    # Status — plain markdown, no button needed
+                    st.markdown(
+                        f"<div style='text-align:center; padding-top:6px; font-size:0.88em; color:#94a3b8;'>{status_str}</div>",
+                        unsafe_allow_html=True
+                    )
                 with col_row_size:
-                    if st.button(f"{size_str}", key=f"btn_detail_size_{doc_id}", use_container_width=True):
-                        st.session_state.selected_detail_doc = doc
-                    
-                st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
+                    # Size — plain markdown, no button needed
+                    st.markdown(
+                        f"<div style='text-align:center; padding-top:6px; font-size:0.88em; color:#94a3b8;'>{size_str}</div>",
+                        unsafe_allow_html=True
+                    )
+                st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.04);'/>", unsafe_allow_html=True)
         else:
             st.info("No matching documents found.")
             

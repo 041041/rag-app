@@ -748,8 +748,8 @@ def document_management_dialog():
     st.markdown("<h2 style='color: #ffffff !important; font-weight: 800 !important; font-size: 1.8em !important; margin-bottom: 2px; padding-bottom: 0;'>🗄️ Document Management Portal</h2>", unsafe_allow_html=True)
     st.markdown("<p style='color: #94a3b8 !important; font-size: 0.9em !important; margin-top: 0; margin-bottom: 15px;'>Manage uploaded clinical documents.</p>", unsafe_allow_html=True)
     
-    # Render simplified filter controls (Requirement 3 & 7)
-    col_f1, col_f2, col_f3 = st.columns([50, 25, 25])
+    # Render simplified filter controls with File Type dropdown (Requirement 3 & 7)
+    col_f1, col_f2, col_f3, col_f4 = st.columns([40, 20, 20, 20])
     with col_f1:
         st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Search filename</p>", unsafe_allow_html=True)
         doc_search = st.text_input("Search filename", placeholder="Search filename...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
@@ -757,11 +757,15 @@ def document_management_dialog():
         st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Status</p>", unsafe_allow_html=True)
         status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel", label_visibility="collapsed")
     with col_f3:
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>File Type</p>", unsafe_allow_html=True)
+        type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel", label_visibility="collapsed")
+    with col_f4:
         st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Sort</p>", unsafe_allow_html=True)
         sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel", label_visibility="collapsed")
         
     st.session_state.doc_search_filter = doc_search
     st.session_state.doc_status_filter = status_filter
+    st.session_state.doc_type_filter = type_filter
     st.session_state.doc_sort_filter = sort_filter
     
     # Filter documents
@@ -774,6 +778,10 @@ def document_management_dialog():
             if status_filter != "All":
                 status = doc.get("status", "Indexed")
                 if status.lower() != status_filter.lower():
+                    continue
+            if type_filter != "All":
+                ext = fname.split(".")[-1].lower()
+                if type_filter.lower() != ext:
                     continue
             filtered_docs_list.append((doc_id, doc))
             
@@ -840,6 +848,7 @@ def document_management_dialog():
         # Table Headers with Select All checkbox inside header (Requirement 10 & 9)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
         all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
+        st.session_state["hdr_select_all"] = all_selected
         
         col_hdr_chk, col_hdr_name, col_hdr_status, col_hdr_size = st.columns([1, 6, 2.5, 2.5])
         with col_hdr_chk:
@@ -848,9 +857,14 @@ def document_management_dialog():
                 if select_all:
                     for f in page_docs_filenames:
                         st.session_state.selected_docs.add(f)
+                    for doc_id, doc in page_docs:
+                        st.session_state[f"chk_{doc_id}"] = True
                 else:
                     for f in page_docs_filenames:
                         st.session_state.selected_docs.discard(f)
+                    for doc_id, doc in page_docs:
+                        st.session_state[f"chk_{doc_id}"] = False
+                st.rerun()
         with col_hdr_name:
             st.markdown("<span style='font-weight: bold; font-size: 0.9em; opacity: 0.9;'>Document</span>", unsafe_allow_html=True)
         with col_hdr_status:
@@ -1449,34 +1463,52 @@ st.markdown("""
         margin-bottom: 5px !important;
     }
     
-    /* Style all secondary buttons inside the document portal table as clean row links */
+    /* Pagination controls (Previous and Next secondary buttons inside dialog) */
     div[role="dialog"] button[data-basebuttonstyle="secondary"] {
-        background-color: transparent !important;
-        border: none !important;
+        background: #334155 !important;
+        background-color: #334155 !important;
         color: #f1f5f9 !important;
-        text-align: left !important;
-        justify-content: flex-start !important;
-        padding: 2px 6px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 4px !important;
+        box-shadow: none !important;
+        text-align: center !important;
+        justify-content: center !important;
+        height: 28px !important;
+        line-height: 28px !important;
+        padding: 0 12px !important;
         font-size: 0.85em !important;
-        line-height: 1.2 !important;
-        transition: all 0.2s ease !important;
-        width: 100% !important;
-        height: 26px !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
     }
     div[role="dialog"] button[data-basebuttonstyle="secondary"]:hover {
-        color: #38bdf8 !important;
-        background-color: rgba(255, 255, 255, 0.05) !important;
+        background: #475569 !important;
+        background-color: #475569 !important;
+        color: #ffffff !important;
     }
-    
-    /* Clean centered text for Status, Size, and Chunks columns (Google Drive style) */
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(5) button {
-        background-color: transparent !important;
+
+    /* Filename buttons inside the table rows: transparent, cyan/blue color */
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button {
         background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        color: #38bdf8 !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        padding: 2px 6px !important;
+        font-weight: 600 !important;
+        box-shadow: none !important;
+    }
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(2) button:hover {
+        color: #0284c7 !important;
+        text-decoration: underline !important;
+    }
+
+    /* Status and Size buttons inside the table rows: transparent, centered text */
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button {
+        background: transparent !important;
+        background-color: transparent !important;
         border: none !important;
         color: #cbd5e1 !important;
         text-align: center !important;
@@ -1484,9 +1516,8 @@ st.markdown("""
         font-weight: 400 !important;
         box-shadow: none !important;
     }
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button:hover,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button:hover,
-    div[role="dialog"] div[data-testid="column"]:nth-of-type(5) button:hover {
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(3) button:hover,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(1) div[data-testid="column"]:nth-of-type(4) button:hover {
         color: #38bdf8 !important;
         background-color: rgba(255, 255, 255, 0.05) !important;
         text-decoration: underline !important;

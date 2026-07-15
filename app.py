@@ -744,12 +744,11 @@ def document_management_dialog():
                 st.rerun()
         return
 
-    st.markdown(
-        "<p style='color: #CBD5E1 !important; font-size: 14px !important; font-weight: 400 !important; margin-bottom: 20px;'>Search, organize and manage uploaded documents.</p>",
-        unsafe_allow_html=True
-    )
+    # Header with increased contrast and subtitle (Requirement 6)
+    st.markdown("<h2 style='color: #ffffff !important; font-weight: 800 !important; font-size: 1.8em !important; margin-bottom: 2px; padding-bottom: 0;'>🗄️ Document Management Portal</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #94a3b8 !important; font-size: 0.9em !important; margin-top: 0; margin-bottom: 15px;'>Manage uploaded clinical documents.</p>", unsafe_allow_html=True)
     
-    # Render simplified filter controls (Requirement 3)
+    # Render simplified filter controls (Requirement 3 & 7)
     col_f1, col_f2, col_f3 = st.columns([50, 25, 25])
     with col_f1:
         st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Search filename</p>", unsafe_allow_html=True)
@@ -798,14 +797,21 @@ def document_management_dialog():
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
     
-    col_table, col_details = st.columns([7, 5])
+    # Dynamic table and side details panel layout (Requirement 5)
+    selected_detail_doc = st.session_state.get("selected_detail_doc")
+    if selected_detail_doc is not None:
+        col_table, col_details = st.columns([7, 5])
+    else:
+        col_table = st.container()
+        col_details = None
+        
     with col_table:
-        # Compact Bulk Action Toolbar (Requirement 5)
+        # Compact Bulk Action Toolbar (Requirement 8)
         if len(st.session_state.selected_docs) > 0:
             selected_count = len(st.session_state.selected_docs)
             sel_label = f"📄 {selected_count} selected"
             
-            col_b_sel, col_b1, col_b2, col_b3 = st.columns([3, 3, 3, 3])
+            col_b_sel, col_b1, col_b2 = st.columns([6, 3, 3])
             with col_b_sel:
                 st.markdown(f"<p style='font-size: 0.9em; font-weight: 700; color: #38bdf8; margin-top: 6px; margin-bottom: 0;'>{sel_label}</p>", unsafe_allow_html=True)
             with col_b1:
@@ -829,13 +835,9 @@ def document_management_dialog():
                     key="bulk_download_action_btn",
                     use_container_width=True
                 )
-            with col_b3:
-                if st.button("✖ Close", key="bulk_close_action_btn", use_container_width=True):
-                    st.session_state.show_doc_manager_dialog = False
-                    st.rerun()
             st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
                     
-        # Table Headers with Select All (Requirement 4)
+        # Table Headers with Select All checkbox inside header (Requirement 10 & 9)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
         all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
         
@@ -867,7 +869,6 @@ def document_management_dialog():
                     
                 # Highlight active row in table via filename pointer (Requirement 9)
                 is_active = False
-                selected_detail_doc = st.session_state.get("selected_detail_doc")
                 if selected_detail_doc and selected_detail_doc.get("filename") == doc_name:
                     is_active = True
                 doc_display_name = f"👉 📄 {doc_name}" if is_active else f"📄 {doc_name}"
@@ -894,56 +895,58 @@ def document_management_dialog():
         else:
             st.info("No matching documents found.")
             
-    with col_details:
-        detail_doc = st.session_state.get("selected_detail_doc")
-        if detail_doc:
-            dfname = detail_doc.get("filename")
-            st.markdown(f"### 📋 File Details")
-            st.markdown(f"**Document Name**: `{dfname}`")
-            dsize = detail_doc.get("file_size_kb")
-            dsize_str = f"{dsize/1024:.1f} MB" if dsize and dsize > 1024 else f"{dsize:.0f} KB" if dsize else "Unknown"
-            st.markdown(f"**Size**: `{dsize_str}`")
-            dext = dfname.split(".")[-1].upper()
-            st.markdown(f"**File Type**: `{dext}`")
-            st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
-            st.markdown("---")
-            # Inline Single Delete Confirmation (Requirement 8 - no nesting dialogs)
-            if st.session_state.get("show_single_delete_confirm") == dfname:
-                st.markdown("#### 🗑️ Confirm File Deletion")
-                st.write(f"Are you sure you want to permanently delete **{dfname}**?")
-                st.warning("⚠️ This action cannot be undone.")
-                col_sd1, col_sd2 = st.columns(2)
-                with col_sd1:
-                    if st.button("Cancel", key="cancel_single_delete_btn", use_container_width=True):
-                        st.session_state.show_single_delete_confirm = None
-                with col_sd2:
-                    if st.button("Delete Permanent", key="confirm_single_delete_btn", type="primary", use_container_width=True):
-                        ddoc_id = None
-                        for d_id, d in indexed_docs.items():
-                            if d.get("filename") == dfname:
-                                ddoc_id = d_id
-                                break
-                        if ddoc_id:
-                            delete_document_workflow(ddoc_id)
-                            st.session_state.selected_docs.discard(dfname)
-                            st.session_state[f"chk_{ddoc_id}"] = False
-                            st.session_state.selected_detail_doc = None
-                        st.session_state.show_single_delete_confirm = None
-            else:
-                file_bytes = get_file_bytes(dfname)
-                st.download_button(
-                    label="📥 Download Original",
-                    data=file_bytes,
-                    file_name=dfname,
-                    key="detail_download_action_btn",
-                    use_container_width=True
-                )
-                if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
-                    st.session_state.show_single_delete_confirm = dfname
-        else:
-            st.markdown("<p style='text-align: center; color: #94a3b8; margin-top: 100px;'>No document selected.</p>", unsafe_allow_html=True)
+    if col_details is not None:
+        with col_details:
+            detail_doc = st.session_state.get("selected_detail_doc")
+            if detail_doc:
+                dfname = detail_doc.get("filename")
+                st.markdown(f"### 📋 File Details")
+                st.markdown(f"**Document Name**: `{dfname}`")
+                dsize = detail_doc.get("file_size_kb")
+                dsize_str = f"{dsize/1024:.1f} MB" if dsize and dsize > 1024 else f"{dsize:.0f} KB" if dsize else "Unknown"
+                st.markdown(f"**Size**: `{dsize_str}`")
+                dext = dfname.split(".")[-1].upper()
+                st.markdown(f"**File Type**: `{dext}`")
+                st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+                st.markdown("---")
+                # Inline Single Delete Confirmation (Requirement 8 - no nesting dialogs)
+                if st.session_state.get("show_single_delete_confirm") == dfname:
+                    st.markdown("#### 🗑️ Confirm File Deletion")
+                    st.write(f"Are you sure you want to permanently delete **{dfname}**?")
+                    st.warning("⚠️ This action cannot be undone.")
+                    col_sd1, col_sd2 = st.columns(2)
+                    with col_sd1:
+                        if st.button("Cancel", key="cancel_single_delete_btn", use_container_width=True):
+                            st.session_state.show_single_delete_confirm = None
+                    with col_sd2:
+                        if st.button("Delete Permanent", key="confirm_single_delete_btn", type="primary", use_container_width=True):
+                            ddoc_id = None
+                            for d_id, d in indexed_docs.items():
+                                if d.get("filename") == dfname:
+                                    ddoc_id = d_id
+                                    break
+                            if ddoc_id:
+                                delete_document_workflow(ddoc_id)
+                                st.session_state.selected_docs.discard(dfname)
+                                st.session_state[f"chk_{ddoc_id}"] = False
+                                st.session_state.selected_detail_doc = None
+                            st.session_state.show_single_delete_confirm = None
+                else:
+                    file_bytes = get_file_bytes(dfname)
+                    st.download_button(
+                        label="📥 Download Original",
+                        data=file_bytes,
+                        file_name=dfname,
+                        key="detail_download_action_btn",
+                        use_container_width=True
+                    )
+                    if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
+                        st.session_state.show_single_delete_confirm = dfname
+                    if st.button("✖ Close Details", key="detail_close_panel_btn", use_container_width=True):
+                        st.session_state.selected_detail_doc = None
+                        st.rerun()
             
-    # Dialog Footer Controls (Requirement 7)
+    # Dialog Footer Controls (Requirement 7 & 11)
     st.markdown("<hr style='margin: 10px 0 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
     col_foot_left, col_foot_right = st.columns([6, 6])
     
@@ -953,10 +956,10 @@ def document_management_dialog():
     with col_foot_right:
         col_p_prev, col_p_next, col_p_close = st.columns([3, 3, 4])
         with col_p_prev:
-            if st.button("Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
+            if st.button("← Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
                 st.session_state.doc_page = max(1, current_page - 1)
         with col_p_next:
-            if st.button("Next", disabled=(current_page >= num_pages), key="btn_page_next", use_container_width=True):
+            if st.button("Next →", disabled=(current_page >= num_pages), key="btn_page_next", use_container_width=True):
                 st.session_state.doc_page = min(num_pages, current_page + 1)
         with col_p_close:
             if st.button("Close", key="btn_portal_close", type="primary", use_container_width=True):
@@ -1403,6 +1406,10 @@ st.markdown("""
         background-color: #1e293b !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         border-radius: 6px !important;
+        height: 28px !important;
+        line-height: 28px !important;
+        padding-top: 0px !important;
+        padding-bottom: 0px !important;
     }
     div[data-testid="stPopoverBody"] {
         background-color: rgb(30, 41, 59) !important;
@@ -1487,9 +1494,9 @@ st.markdown("""
     
     /* Style all dialog buttons to have uniform premium heights and widths */
     div[role="dialog"] button {
-        height: 32px !important;
-        line-height: 32px !important;
-        padding: 0 10px !important;
+        height: 28px !important;
+        line-height: 28px !important;
+        padding: 0 12px !important;
         font-size: 0.85em !important;
         white-space: nowrap !important;
         overflow: hidden !important;

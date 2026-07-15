@@ -701,13 +701,8 @@ def confirm_delete_dialog(doc_id: str, filename: str):
 @st.dialog("🗄️ Document Management Portal", width="large")
 def document_management_dialog():
     """
-    Redesigned enterprise Document Management Portal modal dialog (Requirement 5).
+    Simplified Document Management Portal modal dialog overlay.
     """
-    # Initialize temporary selection caching (Google Drive style picker)
-    if st.session_state.get("dialog_init_needed", True) or "temp_selected_docs" not in st.session_state:
-        st.session_state.temp_selected_docs = set(st.session_state.selected_docs)
-        st.session_state.dialog_init_needed = False
-        
     # Read metadata database
     metadata = get_document_metadata()
     indexed_docs = metadata.get("documents", {})
@@ -717,7 +712,7 @@ def document_management_dialog():
         selected_ids = []
         selected_names = []
         for doc_id, doc in indexed_docs.items():
-            if doc.get("filename") in st.session_state.temp_selected_docs:
+            if doc.get("filename") in st.session_state.selected_docs:
                 selected_ids.append(doc_id)
                 selected_names.append(doc.get("filename"))
                 
@@ -739,8 +734,6 @@ def document_management_dialog():
             if st.button("Delete Permanent", key="confirm_bulk_delete_btn", type="primary", use_container_width=True):
                 for d_id in selected_ids:
                     delete_document_workflow(d_id)
-                # Clear from both temporary and main selection lists
-                st.session_state.temp_selected_docs = set()
                 st.session_state.selected_docs = set()
                 # Clear checkbox keys
                 for k in list(st.session_state.keys()):
@@ -752,28 +745,24 @@ def document_management_dialog():
         return
 
     st.markdown(
-        "<p style='color: #CBD5E1 !important; font-size: 16px !important; font-weight: 400 !important; opacity: 1 !important; margin-bottom: 20px;'>Redesigned clinical document repository for enterprise scaling (1,500+ files).</p>",
+        "<p style='color: #CBD5E1 !important; font-size: 14px !important; font-weight: 400 !important; margin-bottom: 20px;'>Search, organize and manage uploaded documents.</p>",
         unsafe_allow_html=True
     )
     
-    # Render compact filter controls in a single columns block (Requirement 2)
-    col_f1, col_f2, col_f3, col_f4 = st.columns([45, 18, 18, 19])
+    # Render simplified filter controls (Requirement 3)
+    col_f1, col_f2, col_f3 = st.columns([50, 25, 25])
     with col_f1:
-        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Search Documents</p>", unsafe_allow_html=True)
-        doc_search = st.text_input("Search filename", placeholder="Search documents by filename...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Search filename</p>", unsafe_allow_html=True)
+        doc_search = st.text_input("Search filename", placeholder="Search filename...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
     with col_f2:
-        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Status</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Status</p>", unsafe_allow_html=True)
         status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel", label_visibility="collapsed")
     with col_f3:
-        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>File Type</p>", unsafe_allow_html=True)
-        type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel", label_visibility="collapsed")
-    with col_f4:
-        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Sort By</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px;'>Sort</p>", unsafe_allow_html=True)
         sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel", label_visibility="collapsed")
         
     st.session_state.doc_search_filter = doc_search
     st.session_state.doc_status_filter = status_filter
-    st.session_state.doc_type_filter = type_filter
     st.session_state.doc_sort_filter = sort_filter
     
     # Filter documents
@@ -781,22 +770,12 @@ def document_management_dialog():
     if indexed_docs:
         for doc_id, doc in indexed_docs.items():
             fname = doc.get("filename", "")
-            # 1. Search text filter
             if doc_search.strip() and doc_search.lower() not in fname.lower():
                 continue
-                
-            # 2. Status filter
             if status_filter != "All":
                 status = doc.get("status", "Indexed")
                 if status.lower() != status_filter.lower():
                     continue
-                    
-            # 3. File Type filter
-            if type_filter != "All":
-                ext = fname.split(".")[-1].lower()
-                if type_filter.lower() != ext:
-                    continue
-                    
             filtered_docs_list.append((doc_id, doc))
             
     # Sort documents
@@ -812,8 +791,6 @@ def document_management_dialog():
     st.markdown("<hr style='margin: 10px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
     
     total_documents = len(filtered_docs_list)
-    
-    # Pagination calculations (50 documents per page)
     num_pages = max(1, (total_documents - 1) // 50 + 1)
     current_page = min(st.session_state.get("doc_page", 1), num_pages)
     st.session_state.doc_page = current_page
@@ -821,28 +798,14 @@ def document_management_dialog():
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
     
-    total_docs_count = len(indexed_docs)
-    filtered_docs_count = len(filtered_docs_list)
-    selected_docs_count = len(st.session_state.temp_selected_docs)
-    
-    st.markdown(f"""
-    <div style='font-size: 0.85em; opacity: 0.85; margin-bottom: 8px; font-weight: 500;'>
-        📊 Repository Stats: 
-        <span style='color: #cbd5e1; font-weight: 600;'>Total Documents:</span> {total_docs_count} | 
-        <span style='color: #cbd5e1; font-weight: 600;'>Filtered Results:</span> {filtered_docs_count} | 
-        <span style='color: #38bdf8; font-weight: 700;'>Selected Documents:</span> {selected_docs_count}
-    </div>
-    """, unsafe_allow_html=True)
-    
     col_table, col_details = st.columns([7, 5])
     with col_table:
-        # Floating Bulk Action Toolbar (Requirement 5, 6, 7)
-        if len(st.session_state.temp_selected_docs) > 0:
-            selected_count = len(st.session_state.temp_selected_docs)
-            sel_label = f"📄 {selected_count} Document Selected" if selected_count == 1 else f"📄 {selected_count} Documents Selected"
+        # Compact Bulk Action Toolbar (Requirement 5)
+        if len(st.session_state.selected_docs) > 0:
+            selected_count = len(st.session_state.selected_docs)
+            sel_label = f"📄 {selected_count} selected"
             
-            # Render compact toolbar in a single horizontal row (Requirement 5)
-            col_b_sel, col_b1, col_b2, col_b3, col_b4 = st.columns([2.8, 1.2, 1.2, 1.2, 1.2])
+            col_b_sel, col_b1, col_b2, col_b3 = st.columns([3, 3, 3, 3])
             with col_b_sel:
                 st.markdown(f"<p style='font-size: 0.9em; font-weight: 700; color: #38bdf8; margin-top: 6px; margin-bottom: 0;'>{sel_label}</p>", unsafe_allow_html=True)
             with col_b1:
@@ -850,7 +813,7 @@ def document_management_dialog():
                     st.session_state.show_bulk_delete_confirm = True
             with col_b2:
                 # Zip and Download selected documents
-                selected_names_list = list(st.session_state.temp_selected_docs)
+                selected_names_list = list(st.session_state.selected_docs)
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                     for doc_name in selected_names_list:
@@ -867,81 +830,56 @@ def document_management_dialog():
                     use_container_width=True
                 )
             with col_b3:
-                if st.button("🔄 Re-index", key="bulk_reindex_action_btn", use_container_width=True):
-                    with st.spinner("Re-indexing..."):
-                        for doc_name in st.session_state.temp_selected_docs:
-                            file_bytes = get_file_bytes(doc_name)
-                            if file_bytes:
-                                process_and_index_file(doc_name, file_bytes, st.session_state.vector_store)
-                    st.success("Re-indexed!")
-            with col_b4:
-                if st.button("✖ Clear Selection", key="bulk_clear_action_btn", use_container_width=True):
-                    st.session_state.temp_selected_docs.clear()
-                    for k in list(st.session_state.keys()):
-                        if k.startswith("chk_"):
-                            st.session_state[k] = False
+                if st.button("✖ Close", key="bulk_close_action_btn", use_container_width=True):
+                    st.session_state.show_doc_manager_dialog = False
+                    st.rerun()
             st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
                     
-        # Table Headers with Select All (Requirement 8)
+        # Table Headers with Select All (Requirement 4)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
-        all_selected = all(f in st.session_state.temp_selected_docs for f in page_docs_filenames) if page_docs_filenames else False
+        all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
         
-        col_hdr_chk, col_hdr_status, col_hdr_size, col_hdr_chunks = st.columns([6, 2, 2, 2])
+        col_hdr_chk, col_hdr_name, col_hdr_status, col_hdr_size = st.columns([1, 6, 2.5, 2.5])
         with col_hdr_chk:
-            # Removed standard widget key to prevent state caching conflicts
-            select_all = st.checkbox("Select All", value=all_selected)
+            select_all = st.checkbox("", value=all_selected, key="hdr_select_all", label_visibility="collapsed")
             if select_all != all_selected:
                 if select_all:
                     for f in page_docs_filenames:
-                        st.session_state.temp_selected_docs.add(f)
+                        st.session_state.selected_docs.add(f)
                 else:
                     for f in page_docs_filenames:
-                        st.session_state.temp_selected_docs.discard(f)
-                
-        st.markdown("""
-        <div style='display: flex; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 4px; margin-bottom: 6px; font-size: 0.8em; opacity: 0.9;'>
-            <div style='flex: 6;'>Document</div>
-            <div style='flex: 2; text-align: center;'>Status</div>
-            <div style='flex: 2; text-align: center;'>Size</div>
-            <div style='flex: 2; text-align: center; padding-right: 5px;'>Chunks</div>
-        </div>
-        """, unsafe_allow_html=True)
+                        st.session_state.selected_docs.discard(f)
+        with col_hdr_name:
+            st.markdown("<span style='font-weight: bold; font-size: 0.9em; opacity: 0.9;'>Document</span>", unsafe_allow_html=True)
+        with col_hdr_status:
+            st.markdown("<div style='text-align: center; font-weight: bold; font-size: 0.9em; opacity: 0.9;'>Status</div>", unsafe_allow_html=True)
+        with col_hdr_size:
+            st.markdown("<div style='text-align: center; font-weight: bold; font-size: 0.9em; opacity: 0.9;'>Size</div>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin: 4px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.15);'/>", unsafe_allow_html=True)
         
         if page_docs:
             for doc_id, doc in page_docs:
                 doc_name = doc.get("filename")
                 size = doc.get("file_size_kb")
-                if size is not None:
-                    size_str = f"{size/1024:.1f} MB" if size > 1024 else f"{size:.0f} KB"
-                else:
-                    size_str = "Unknown"
-                    
+                size_str = f"{size/1024:.1f} MB" if size and size > 1024 else f"{size:.0f} KB" if size else "Unknown"
                 status = doc.get("status", "Indexed")
-                if status == "Indexed":
-                    status_str = "🟢 Indexed"
-                elif status == "Processing":
-                    status_str = "🟡 Processing"
-                else:
-                    status_str = "🔴 Failed"
+                status_str = "🟢 Indexed" if status == "Indexed" else "🟡 Processing" if status == "Processing" else "🔴 Failed"
                     
-                chunks_count = doc.get("chunk_count", 0)
-                chunks_str = f"{chunks_count}"
-                
-                # Highlight active row in table via filename pointer (Requirement 10)
+                # Highlight active row in table via filename pointer (Requirement 9)
                 is_active = False
                 selected_detail_doc = st.session_state.get("selected_detail_doc")
                 if selected_detail_doc and selected_detail_doc.get("filename") == doc_name:
                     is_active = True
                 doc_display_name = f"👉 📄 {doc_name}" if is_active else f"📄 {doc_name}"
                 
-                col_row_chk, col_row_name, col_row_status, col_row_size, col_row_chunks = st.columns([1, 5, 2, 2, 2])
+                col_row_chk, col_row_name, col_row_status, col_row_size = st.columns([1, 6, 2.5, 2.5])
                 with col_row_chk:
-                    doc_checked = st.checkbox("", value=(doc_name in st.session_state.temp_selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
-                    if doc_checked != (doc_name in st.session_state.temp_selected_docs):
+                    doc_checked = st.checkbox("", value=(doc_name in st.session_state.selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
+                    if doc_checked != (doc_name in st.session_state.selected_docs):
                         if doc_checked:
-                            st.session_state.temp_selected_docs.add(doc_name)
+                            st.session_state.selected_docs.add(doc_name)
                         else:
-                            st.session_state.temp_selected_docs.discard(doc_name)
+                            st.session_state.selected_docs.discard(doc_name)
                 with col_row_name:
                     if st.button(doc_display_name, key=f"btn_detail_name_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
@@ -950,9 +888,6 @@ def document_management_dialog():
                         st.session_state.selected_detail_doc = doc
                 with col_row_size:
                     if st.button(f"{size_str}", key=f"btn_detail_size_{doc_id}", use_container_width=True):
-                        st.session_state.selected_detail_doc = doc
-                with col_row_chunks:
-                    if st.button(f"{chunks_str}", key=f"btn_detail_chunks_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                     
                 st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
@@ -965,37 +900,12 @@ def document_management_dialog():
             dfname = detail_doc.get("filename")
             st.markdown(f"### 📋 File Details")
             st.markdown(f"**Document Name**: `{dfname}`")
-            
-            status = detail_doc.get("status", "Indexed")
-            if status == "Indexed":
-                status_str = "🟢 Indexed"
-            elif status == "Processing":
-                status_str = "🟡 Processing"
-            else:
-                status_str = "🔴 Failed"
-            st.markdown(f"**Status**: `{status_str}`")
-            
             dsize = detail_doc.get("file_size_kb")
-            if dsize is not None:
-                dsize_str = f"{dsize/1024:.1f} MB" if dsize > 1024 else f"{dsize:.0f} KB"
-            else:
-                dsize_str = "Unknown"
+            dsize_str = f"{dsize/1024:.1f} MB" if dsize and dsize > 1024 else f"{dsize:.0f} KB" if dsize else "Unknown"
             st.markdown(f"**Size**: `{dsize_str}`")
-            
             dext = dfname.split(".")[-1].upper()
             st.markdown(f"**File Type**: `{dext}`")
-            
-            pages_val = detail_doc.get("pages") or detail_doc.get("metadata", {}).get("pages") or "N/A"
-            st.markdown(f"**Pages**: `{pages_val}`")
-            st.markdown(f"**Chunks**: `{detail_doc.get('chunk_count', 0)} Chunks`")
-            
             st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
-            st.markdown(f"**Last Indexed**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
-            
-            # Additional metadata dictionary
-            st.markdown("**Metadata**:")
-            st.json(detail_doc.get("metadata", {}))
-            
             st.markdown("---")
             # Inline Single Delete Confirmation (Requirement 8 - no nesting dialogs)
             if st.session_state.get("show_single_delete_confirm") == dfname:
@@ -1008,7 +918,6 @@ def document_management_dialog():
                         st.session_state.show_single_delete_confirm = None
                 with col_sd2:
                     if st.button("Delete Permanent", key="confirm_single_delete_btn", type="primary", use_container_width=True):
-                        # Find doc_id
                         ddoc_id = None
                         for d_id, d in indexed_docs.items():
                             if d.get("filename") == dfname:
@@ -1016,13 +925,11 @@ def document_management_dialog():
                                 break
                         if ddoc_id:
                             delete_document_workflow(ddoc_id)
-                            st.session_state.temp_selected_docs.discard(dfname)
                             st.session_state.selected_docs.discard(dfname)
                             st.session_state[f"chk_{ddoc_id}"] = False
                             st.session_state.selected_detail_doc = None
                         st.session_state.show_single_delete_confirm = None
             else:
-                # Action Buttons inside detail panel
                 file_bytes = get_file_bytes(dfname)
                 st.download_button(
                     label="📥 Download Original",
@@ -1031,52 +938,30 @@ def document_management_dialog():
                     key="detail_download_action_btn",
                     use_container_width=True
                 )
-                
-                if st.button("🔄 Re-index File", key="detail_reindex_action_btn", use_container_width=True):
-                    with st.spinner("Re-indexing..."):
-                        process_and_index_file(dfname, file_bytes, st.session_state.vector_store)
-                    st.success("Re-indexed successfully!")
-                    
                 if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
                     st.session_state.show_single_delete_confirm = dfname
         else:
-            st.info("ℹ️ Select a document row to view detailed metadata and file actions.")
-            
-    # Admin Controls inside modal
-    with st.expander("🛠️ Administrative Controls"):
-        st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
-        if st.button("⚙️ Rebuild / Clear Index", type="secondary", key="admin_rebuild_modal_btn", use_container_width=True):
-            rebuild_empty_index_workflow()
+            st.markdown("<p style='text-align: center; color: #94a3b8; margin-top: 100px;'>No document selected.</p>", unsafe_allow_html=True)
             
     # Dialog Footer Controls (Requirement 7)
     st.markdown("<hr style='margin: 10px 0 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
-    col_foot_left, col_foot_right = st.columns([7, 5])
+    col_foot_left, col_foot_right = st.columns([6, 6])
     
     with col_foot_left:
-        col_p_text, col_p_prev, col_p_next = st.columns([5, 2.5, 2.5])
-        with col_p_text:
-            st.markdown(f"<p style='font-size: 0.85em; opacity: 0.85; margin-top: 8px;'>Showing <b>{start_index + 1}–{end_index}</b> of <b>{total_documents}</b> Documents</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-size: 0.85em; opacity: 0.85; margin-top: 8px;'>Showing <b>{start_index + 1}–{end_index}</b> of <b>{total_documents}</b> Documents</p>", unsafe_allow_html=True)
+        
+    with col_foot_right:
+        col_p_prev, col_p_next, col_p_close = st.columns([3, 3, 4])
         with col_p_prev:
             if st.button("Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
                 st.session_state.doc_page = max(1, current_page - 1)
         with col_p_next:
             if st.button("Next", disabled=(current_page >= num_pages), key="btn_page_next", use_container_width=True):
                 st.session_state.doc_page = min(num_pages, current_page + 1)
-                
-    with col_foot_right:
-        col_f_cancel, col_f_done = st.columns([1, 1])
-        with col_f_cancel:
-            if st.button("Cancel", key="btn_portal_cancel", use_container_width=True):
-                # Discard temporary selection state
-                st.session_state.temp_selected_docs = set(st.session_state.selected_docs)
+        with col_p_close:
+            if st.button("Close", key="btn_portal_close", type="primary", use_container_width=True):
                 st.session_state.show_doc_manager_dialog = False
-                st.rerun() # Closes the dialog modal
-        with col_f_done:
-            if st.button("Done", key="btn_portal_done", type="primary", use_container_width=True):
-                # Commit temporary selection to main state
-                st.session_state.selected_docs = set(st.session_state.temp_selected_docs)
-                st.session_state.show_doc_manager_dialog = False
-                st.rerun() # Closes the dialog modal and triggers parent page redraw
+                st.rerun()
 
 def sync_index_if_version_changed():
     """

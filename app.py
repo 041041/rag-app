@@ -745,8 +745,7 @@ def document_management_dialog():
                 st.rerun()
         with col_c2:
             if st.button("Delete Permanent", key="confirm_bulk_delete_btn", type="primary", use_container_width=True):
-                for d_id in selected_ids:
-                    delete_document_workflow(d_id)
+                delete_documents_bulk_workflow(selected_ids)
                 st.session_state.selected_docs = set()
                 # Clear checkbox keys
                 for k in list(st.session_state.keys()):
@@ -1044,6 +1043,92 @@ def sync_index_if_version_changed():
     except Exception as e:
         print(f"⚠️ Error checking R2 version: {e}", flush=True)
 
+def delete_documents_bulk_workflow(doc_ids: list):
+    if not doc_ids:
+        return
+        
+    owner_id = f"bulk_delete_session_{int(time.time())}"
+    with st.spinner(f"🗑️ Acquiring R2 Lock & deleting {len(doc_ids)} documents..."):
+        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.error("❌ Locking Conflict: another operation is writing. Please try again.")
+            return
+            
+        try:
+            # 1. Download current indices from R2
+            try:
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
+                    settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
+                    settings.INDEXES_DIR / settings.METADATA_PKL_FILE
+                )
+                r2_storage.download_file(
+                    f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
+                    settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+                )
+                st.session_state.vector_store.load(str(settings.INDEXES_DIR))
+            except Exception as e:
+                logger.info(f"No index to pull: {e}")
+                
+            metadata = get_document_metadata()
+            
+            deleted_filenames = []
+            chunk_ids_to_remove = []
+            
+            # 2. Gather vectors and files to delete
+            for doc_id in doc_ids:
+                if doc_id in metadata.get("documents", {}):
+                    doc_info = metadata["documents"][doc_id]
+                    filename = doc_info["filename"]
+                    chunk_ids = doc_info.get("chunk_ids", [])
+                    chunk_ids_to_remove.extend(chunk_ids)
+                    deleted_filenames.append(filename)
+                    
+                    # Delete the actual file from R2
+                    r2_key = doc_info.get("r2_path", f"{settings.R2_DOCUMENTS_PREFIX}{filename}")
+                    try:
+                        r2_storage.delete_file(r2_key)
+                    except Exception as e:
+                        logger.warning(f"Could not delete R2 object {r2_key}: {e}")
+                        
+                    # Remove from processed files cache
+                    if filename in st.session_state.processed_files:
+                        st.session_state.processed_files.remove(filename)
+                        
+                    # Delete from metadata dictionary
+                    del metadata["documents"][doc_id]
+            
+            # 3. Batch remove vectors from FAISS
+            if chunk_ids_to_remove:
+                import numpy as np
+                ids_to_remove = np.array(chunk_ids_to_remove, dtype=np.int64)
+                removed_count = st.session_state.vector_store.index.remove_ids(ids_to_remove)
+                print(f"🗑️ Removed {removed_count} vectors from FAISS index in bulk.", flush=True)
+                
+            # 4. Save and Upload
+            metadata["version"] = metadata.get("version", 0) + 1
+            metadata["last_updated"] = datetime.now().isoformat()
+            
+            st.session_state.vector_store.save(str(settings.INDEXES_DIR))
+            save_document_metadata(metadata)
+            
+            r2_storage.backup_indexes()
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+            
+            st.session_state.health_status["version"] = metadata["version"]
+            st.session_state.health_status["last_updated"] = metadata["last_updated"]
+            
+            st.toast(f"🗑️ Successfully deleted {len(deleted_filenames)} documents!")
+        except Exception as e:
+            st.error(f"❌ Failed to delete documents: {e}")
+        finally:
+            r2_storage.release_lock(owner_id)
+
 def delete_document_workflow(doc_id: str):
     owner_id = f"delete_session_{int(time.time())}_{doc_id}"
     with st.spinner("🗑️ Acquiring R2 Lock & deleting document..."):
@@ -1197,74 +1282,7 @@ def sync_index_if_version_changed():
     except Exception as e:
         print(f"⚠️ Error checking R2 version: {e}", flush=True)
 
-def delete_document_workflow(doc_id: str):
-    owner_id = f"delete_session_{int(time.time())}_{doc_id}"
-    with st.spinner("🗑️ Acquiring R2 Lock & deleting document..."):
-        lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
-        if not lock_acquired:
-            st.error("❌ Locking Conflict: another operation is writing. Please try again.")
-            return
-            
-        try:
-            try:
-                r2_storage.download_file(
-                    f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
-                    settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
-                )
-                r2_storage.download_file(
-                    f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
-                    settings.INDEXES_DIR / settings.METADATA_PKL_FILE
-                )
-                r2_storage.download_file(
-                    f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
-                    settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
-                )
-                st.session_state.vector_store.load(str(settings.INDEXES_DIR))
-            except Exception as e:
-                logger.info(f"No index to pull: {e}")
-                
-            metadata = get_document_metadata()
-            if doc_id not in metadata.get("documents", {}):
-                st.error("❌ Document not found in index.")
-                return
-                
-            doc_info = metadata["documents"][doc_id]
-            filename = doc_info["filename"]
-            chunk_ids = doc_info.get("chunk_ids", [])
-            
-            if chunk_ids:
-                import numpy as np
-                ids_to_remove = np.array(chunk_ids, dtype=np.int64)
-                removed_count = st.session_state.vector_store.index.remove_ids(ids_to_remove)
-                print(f"🗑️ Removed {removed_count} vectors from FAISS index.", flush=True)
-                
-            del metadata["documents"][doc_id]
-            metadata["version"] = metadata.get("version", 0) + 1
-            metadata["last_updated"] = datetime.now().isoformat()
-            
-            st.session_state.vector_store.save(str(settings.INDEXES_DIR))
-            save_document_metadata(metadata)
-            
-            r2_storage.backup_indexes()
-            r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
-            r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
-            r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
-            
-            r2_key = doc_info.get("r2_path", f"{settings.R2_DOCUMENTS_PREFIX}{filename}")
-            r2_storage.delete_file(r2_key)
-            
-            if filename in st.session_state.processed_files:
-                st.session_state.processed_files.remove(filename)
-                
-            st.session_state.health_status["version"] = metadata["version"]
-            st.session_state.health_status["last_updated"] = metadata["last_updated"]
-            
-            st.success(f"🗑️ Successfully deleted {filename} from index and Cloudflare R2.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Failed to delete document: {e}")
-        finally:
-            r2_storage.release_lock(owner_id)
+
 
 def rebuild_empty_index_workflow():
     owner_id = f"rebuild_session_{int(time.time())}"

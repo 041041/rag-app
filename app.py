@@ -712,17 +712,27 @@ def document_management_dialog():
     metadata = get_document_metadata()
     indexed_docs = metadata.get("documents", {})
     
-    # Render filters (top bar)
-    st.markdown("<p style='font-size: 0.85em; opacity: 0.85; font-weight: 600; margin-bottom: 4px;'>🔍 Filter and Discover</p>", unsafe_allow_html=True)
-    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 1, 1, 1])
+    # Render brighter labels in a row (Requirement 2)
+    col_l1, col_l2, col_l3, col_l4 = st.columns([45, 18, 18, 19])
+    with col_l1:
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Search Documents</p>", unsafe_allow_html=True)
+    with col_l2:
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Status</p>", unsafe_allow_html=True)
+    with col_l3:
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>File Type</p>", unsafe_allow_html=True)
+    with col_l4:
+        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Sort By</p>", unsafe_allow_html=True)
+        
+    # Render inputs row with hidden labels
+    col_f1, col_f2, col_f3, col_f4 = st.columns([45, 18, 18, 19])
     with col_f1:
-        doc_search = st.text_input("Search filename", placeholder="Type to filter...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
+        doc_search = st.text_input("Search filename", placeholder="Search documents by filename...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
     with col_f2:
-        status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel")
+        status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel", label_visibility="collapsed")
     with col_f3:
-        type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel")
+        type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel", label_visibility="collapsed")
     with col_f4:
-        sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel")
+        sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel", label_visibility="collapsed")
         
     st.session_state.doc_search_filter = doc_search
     st.session_state.doc_status_filter = status_filter
@@ -774,15 +784,16 @@ def document_management_dialog():
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
     
+    # Layout splits (Table / Details)
     col_table, col_details = st.columns([7, 5])
     
     with col_table:
-        # Floating Bulk Action Toolbar (Requirement 3 & 6)
+        # Floating Bulk Action Toolbar (Requirement 6)
         if len(st.session_state.selected_docs) > 0:
             selected_count = len(st.session_state.selected_docs)
             st.markdown(f"""
             <div style='background-color: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 6px 12px; margin-bottom: 10px;'>
-                <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>☑ {selected_count} Selected</span>
+                <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>📄 {selected_count} Documents Selected</span>
             </div>
             """, unsafe_allow_html=True)
             
@@ -832,7 +843,7 @@ def document_management_dialog():
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
         all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
         
-        col_hdr_chk, col_hdr_size, col_hdr_chunks = st.columns([6, 3, 3])
+        col_hdr_chk, col_hdr_status, col_hdr_size, col_hdr_chunks = st.columns([6, 2, 2, 2])
         with col_hdr_chk:
             select_all = st.checkbox("Select All", value=all_selected, key="select_all_chk")
             if select_all != all_selected:
@@ -847,8 +858,9 @@ def document_management_dialog():
         st.markdown("""
         <div style='display: flex; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 4px; margin-bottom: 6px; font-size: 0.8em; opacity: 0.9;'>
             <div style='flex: 6;'>Document</div>
-            <div style='flex: 3; text-align: right;'>Size</div>
-            <div style='flex: 3; text-align: right; padding-right: 5px;'>Chunks</div>
+            <div style='flex: 2; text-align: right;'>Status</div>
+            <div style='flex: 2; text-align: right;'>Size</div>
+            <div style='flex: 2; text-align: right; padding-right: 5px;'>Chunks</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -861,7 +873,18 @@ def document_management_dialog():
                 else:
                     size_str = "Unknown"
                     
-                col_row_chk, col_row_name, col_row_size, col_row_chunks = st.columns([1, 5, 3, 3])
+                status = doc.get("status", "Indexed")
+                if status == "Indexed":
+                    status_str = "🟢 Indexed"
+                elif status == "Processing":
+                    status_str = "🟡 Processing"
+                else:
+                    status_str = "🔴 Failed"
+                    
+                chunks_count = doc.get("chunk_count", 0)
+                chunks_str = f"{chunks_count} Chunks"
+                
+                col_row_chk, col_row_name, col_row_status, col_row_size, col_row_chunks = st.columns([1, 5, 2, 2, 2])
                 with col_row_chk:
                     doc_checked = st.checkbox("", value=(doc_name in st.session_state.selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
                     if doc_checked != (doc_name in st.session_state.selected_docs):
@@ -871,8 +894,12 @@ def document_management_dialog():
                             st.session_state.selected_docs.discard(doc_name)
                         # No manual st.rerun() to prevent double execution refresh bugs!
                 with col_row_name:
-                    # Row clicks (name, size, chunks) load details (Requirement 5 & 8)
+                    # Row clicks (name, status, size, chunks) load details (Requirement 5 & 8)
                     if st.button(f"📄 {doc_name}", key=f"btn_detail_name_{doc_id}", use_container_width=True):
+                        st.session_state.selected_detail_doc = doc
+                        st.rerun()
+                with col_row_status:
+                    if st.button(f"{status_str}", key=f"btn_detail_status_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                         st.rerun()
                 with col_row_size:
@@ -880,17 +907,17 @@ def document_management_dialog():
                         st.session_state.selected_detail_doc = doc
                         st.rerun()
                 with col_row_chunks:
-                    if st.button(f"{doc.get('chunk_count', 0)}", key=f"btn_detail_chunks_{doc_id}", use_container_width=True):
+                    if st.button(f"{chunks_str}", key=f"btn_detail_chunks_{doc_id}", use_container_width=True):
                         st.session_state.selected_detail_doc = doc
                         st.rerun()
                     
                 st.markdown("<hr style='margin: 2px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
                 
-            # Pagination Controls (Requirement 7)
+            # Pagination Controls (Requirement 7 & 9)
             st.markdown("<br/>", unsafe_allow_html=True)
             col_p1, col_p2, col_p3, col_p4 = st.columns([3, 1, 1, 1])
             with col_p1:
-                st.markdown(f"<span style='font-size: 0.8em; opacity: 0.85;'>Displaying **{start_index + 1}–{end_index}** of **{total_documents}** Documents</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='font-size: 0.8em; opacity: 0.85;'>Showing **{start_index + 1}–{end_index}** of **{total_documents}** Documents</span>", unsafe_allow_html=True)
             with col_p2:
                 if st.button("Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
                     st.session_state.doc_page = max(1, current_page - 1)
@@ -911,26 +938,37 @@ def document_management_dialog():
         detail_doc = st.session_state.get("selected_detail_doc")
         if detail_doc:
             dfname = detail_doc.get("filename")
-            st.markdown(f"### 📋 File Metadata")
-            st.markdown(f"**File Name**: `{dfname}`")
-            st.markdown(f"**Status**: `🟢 Indexed`")
+            st.markdown(f"### 📋 File Details")
+            st.markdown(f"**Document Name**: `{dfname}`")
+            
+            status = detail_doc.get("status", "Indexed")
+            if status == "Indexed":
+                status_str = "🟢 Indexed"
+            elif status == "Processing":
+                status_str = "🟡 Processing"
+            else:
+                status_str = "🔴 Failed"
+            st.markdown(f"**Status**: `{status_str}`")
             
             dsize = detail_doc.get("file_size_kb")
             if dsize is not None:
                 dsize_str = f"{dsize/1024:.1f} MB" if dsize > 1024 else f"{dsize:.0f} KB"
             else:
                 dsize_str = "Unknown"
-                
-            st.markdown(f"**File Size**: `{dsize_str}`")
-            st.markdown(f"**Chunks**: `{detail_doc.get('chunk_count', 0)}`")
-            st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
-            st.markdown(f"**Last Indexed**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+            st.markdown(f"**Size**: `{dsize_str}`")
             
             dext = dfname.split(".")[-1].upper()
             st.markdown(f"**File Type**: `{dext}`")
             
+            pages_val = detail_doc.get("pages") or detail_doc.get("metadata", {}).get("pages") or "N/A"
+            st.markdown(f"**Pages**: `{pages_val}`")
+            st.markdown(f"**Chunks**: `{detail_doc.get('chunk_count', 0)} Chunks`")
+            
+            st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+            st.markdown(f"**Last Indexed**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+            
             # Additional metadata dictionary
-            st.markdown("**Metadata Attributes**:")
+            st.markdown("**Metadata**:")
             st.json(detail_doc.get("metadata", {}))
             
             st.markdown("---")
@@ -1536,9 +1574,14 @@ uploaded = st.sidebar.file_uploader(
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = set()
 
-# 5. Manage Documents Trigger (Requirement 2)
-st.sidebar.markdown("<br/>", unsafe_allow_html=True)
-if st.sidebar.button("📁 Manage Documents", use_container_width=True, help="View uploaded files, download or delete them"):
+# 5. Manage Documents Trigger (Requirement 2 & 1)
+st.sidebar.markdown("""
+<div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 15px; margin-bottom: 5px;'>
+    <p style='font-size: 0.85em; font-weight: 600; margin: 0; color: #f8fafc;'>📁 Manage Documents</p>
+    <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>View, search and organize uploaded documents.</p>
+</div>
+""", unsafe_allow_html=True)
+if st.sidebar.button("Open Document Manager", key="btn_open_portal_sidebar", use_container_width=True):
     document_management_dialog()
 
 if uploaded:

@@ -482,16 +482,7 @@ def query_with_features(qa_chain, query: str):
                         debug_hint = "\n\nDebug info from chain:\n" + err_str
                 except Exception:
                     debug_hint = f"\n\nException repr: {repr(e)}"
-                st.error(f"❌ All retries failed: {err_str}{debug_hint}")
-                st.write("----\n**Debug (copy this and paste in chat):**")
-                st.write("Exception:", repr(e))
-                try:
-                    if "last_raw_preview" in err_str:
-                        preview = err_str.split("last_raw_preview: ", 1)[-1]
-                        st.code(preview[:5000])
-                except Exception:
-                    pass
-                return None, False, elapsed
+                raise RuntimeError(f"All retries failed: {err_str}{debug_hint}")
 
     return None, False, time.time() - start_time
 

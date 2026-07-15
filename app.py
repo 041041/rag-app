@@ -695,7 +695,10 @@ def confirm_delete_dialog(doc_id: str, filename: str):
             delete_document_workflow(doc_id)
             st.session_state.selected_docs.discard(filename)
             if st.session_state.selected_detail_doc and st.session_state.selected_detail_doc.get("filename") == filename:
-                st.session_state.selected_detail_do@st.dialog("🗄️ Document Management Portal", width="large")
+                st.session_state.selected_detail_doc = None
+            st.rerun()
+
+@st.dialog("🗄️ Document Management Portal", width="large")
 def document_management_dialog():
     """
     Redesigned enterprise Document Management Portal modal dialog (Requirement 5).

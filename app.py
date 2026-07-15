@@ -40,8 +40,9 @@ except ImportError:
     except ImportError:
         HumanMessage = None
 
-# Map GEMINI_API_KEY to GOOGLE_API_KEY if needed (LangChain defaults to GOOGLE_API_KEY)
-if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
+# Map GEMINI_API_KEY to GOOGLE_API_KEY (LangChain defaults to GOOGLE_API_KEY)
+# We prioritize GEMINI_API_KEY if present to avoid conflicts with default system keys
+if os.getenv("GEMINI_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
 
 # Ensure an asyncio event loop exists for the current thread (Streamlit-related fix)

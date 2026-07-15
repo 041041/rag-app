@@ -1597,6 +1597,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Check if vector_store needs reinitialization due to signature update (Requirement 9)
+if "vector_store" in st.session_state:
+    try:
+        import inspect
+        sig = inspect.signature(st.session_state.vector_store.search)
+        if "filter_sources" not in sig.parameters:
+            print("🔄 FAISSVectorStore.search signature mismatch. Force-clearing st.cache_resource...", flush=True)
+            st.cache_resource.clear()
+            for k in ["vector_store", "health_status"]:
+                if k in st.session_state:
+                    del st.session_state[k]
+    except Exception as e:
+        print(f"⚠️ Error checking signature: {e}", flush=True)
+
 # Startup check trigger at top-level to prevent AttributeError
 if "vector_store" not in st.session_state:
     with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):

@@ -4,6 +4,8 @@ import asyncio
 import time
 import json
 import logging
+import zipfile
+import io
 import hashlib
 import pickle
 from datetime import datetime
@@ -652,10 +654,35 @@ def get_file_bytes(filename: str) -> bytes:
         return local_path.read_bytes()
     return b""
 
+@st.dialog("🗑️ Delete Documents Confirmation")
+def confirm_bulk_delete_dialog(doc_ids: List[str], filenames: List[str]):
+    """
+    Modal confirmation popup for bulk document deletion (Requirement 8).
+    """
+    count = len(doc_ids)
+    st.write(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
+    st.warning("⚠️ This action cannot be undone and will remove all corresponding vector chunks.")
+    
+    with st.expander("Show files being deleted"):
+        for f in filenames:
+            st.write(f"- {f}")
+            
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        if st.button("Cancel", key="cancel_bulk_delete_btn", use_container_width=True):
+            st.rerun()
+    with col_c2:
+        if st.button("Delete Permanent", key="confirm_bulk_delete_btn", type="primary", use_container_width=True):
+            for d_id in doc_ids:
+                delete_document_workflow(d_id)
+            st.session_state.selected_docs = set()
+            st.session_state.selected_detail_doc = None
+            st.rerun()
+
 @st.dialog("🗑️ Delete Document Confirmation")
 def confirm_delete_dialog(doc_id: str, filename: str):
     """
-    Modal confirmation popup for document deletion.
+    Modal confirmation popup for single document deletion (Requirement 8).
     """
     st.write(f"Are you sure you want to permanently delete **{filename}** from the index and Cloudflare R2?")
     st.warning("⚠️ This action cannot be undone and will remove all corresponding vector chunks.")
@@ -666,15 +693,18 @@ def confirm_delete_dialog(doc_id: str, filename: str):
     with col_c2:
         if st.button("Delete Permanent", key="confirm_delete_btn", type="primary", use_container_width=True):
             delete_document_workflow(doc_id)
+            st.session_state.selected_docs.discard(filename)
+            if st.session_state.selected_detail_doc and st.session_state.selected_detail_doc.get("filename") == filename:
+                st.session_state.selected_detail_doc = None
             st.rerun()
 
-@st.dialog("🗄️ Document Management Portal")
+@st.dialog("🗄️ Document Management Portal", width="large")
 def document_management_dialog():
     """
-    Modal dialog overlay for the Document Management Portal.
+    Redesigned enterprise Document Management Portal modal dialog (Requirement 5).
     """
     st.markdown(
-        "<p style='color: #CBD5E1 !important; font-size: 16px !important; font-weight: 400 !important; opacity: 1 !important; margin-bottom: 20px;'>Manage clinical documents on Cloudflare R2 and synced FAISS index.</p>",
+        "<p style='color: #CBD5E1 !important; font-size: 16px !important; font-weight: 400 !important; opacity: 1 !important; margin-bottom: 20px;'>Redesigned clinical document repository for enterprise scaling (1,500+ files).</p>",
         unsafe_allow_html=True
     )
     
@@ -682,81 +712,259 @@ def document_management_dialog():
     metadata = get_document_metadata()
     indexed_docs = metadata.get("documents", {})
     
-    # Document Search
-    doc_search = st.text_input("🔍 Search Documents...", placeholder="Enter filename...", key="doc_search_modal_input")
+    # Render filters (top bar)
+    st.markdown("<p style='font-size: 0.85em; opacity: 0.85; font-weight: 600; margin-bottom: 4px;'>🔍 Filter and Discover</p>", unsafe_allow_html=True)
+    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 1, 1, 1])
+    with col_f1:
+        doc_search = st.text_input("Search filename", placeholder="Type to filter...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
+    with col_f2:
+        status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel")
+    with col_f3:
+        type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel")
+    with col_f4:
+        sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel")
+        
+    st.session_state.doc_search_filter = doc_search
+    st.session_state.doc_status_filter = status_filter
+    st.session_state.doc_type_filter = type_filter
+    st.session_state.doc_sort_filter = sort_filter
     
     # Filter documents
-    filtered_docs = {}
+    filtered_docs_list = []
     if indexed_docs:
         for doc_id, doc in indexed_docs.items():
-            if not doc_search.strip() or doc_search.lower() in doc.get("filename", "").lower():
-                filtered_docs[doc_id] = doc
+            fname = doc.get("filename", "")
+            # 1. Search text filter
+            if doc_search.strip() and doc_search.lower() not in fname.lower():
+                continue
                 
-    if filtered_docs:
-        # Render Table Headers aligned to [6, 2, 2, 2] ratio
+            # 2. Status filter
+            if status_filter != "All":
+                status = doc.get("status", "Indexed")
+                if status.lower() != status_filter.lower():
+                    continue
+                    
+            # 3. File Type filter
+            if type_filter != "All":
+                ext = fname.split(".")[-1].lower()
+                if type_filter.lower() != ext:
+                    continue
+                    
+            filtered_docs_list.append((doc_id, doc))
+            
+    # Sort documents
+    if sort_filter == "Newest":
+        filtered_docs_list.sort(key=lambda x: x[1].get("timestamp", ""), reverse=True)
+    elif sort_filter == "Oldest":
+        filtered_docs_list.sort(key=lambda x: x[1].get("timestamp", ""), reverse=False)
+    elif sort_filter == "A-Z":
+        filtered_docs_list.sort(key=lambda x: x[1].get("filename", "").lower(), reverse=False)
+    elif sort_filter == "Z-A":
+        filtered_docs_list.sort(key=lambda x: x[1].get("filename", "").lower(), reverse=True)
+        
+    st.markdown("<hr style='margin: 10px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+    
+    total_documents = len(filtered_docs_list)
+    
+    # Pagination calculations (50 documents per page)
+    num_pages = max(1, (total_documents - 1) // 50 + 1)
+    current_page = min(st.session_state.get("doc_page", 1), num_pages)
+    st.session_state.doc_page = current_page
+    start_index = (current_page - 1) * 50
+    end_index = min(start_index + 50, total_documents)
+    page_docs = filtered_docs_list[start_index:end_index]
+    
+    # Layout splits (Table / Details)
+    col_table, col_details = st.columns([7, 5])
+    
+    with col_table:
+        # Floating Bulk Action Toolbar (Requirement 3)
+        if len(st.session_state.selected_docs) > 0:
+            selected_count = len(st.session_state.selected_docs)
+            st.markdown(f"""
+            <div style='background-color: rgba(30, 41, 59, 0.95); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 10px; margin-bottom: 12px;'>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='font-size: 0.9em; font-weight: 600; color: #38bdf8;'>💎 {selected_count} Documents Selected</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_b1, col_b2, col_b3, col_b4 = st.columns([1, 1.4, 1.1, 1.3])
+            with col_b1:
+                if st.button("🗑 Delete", type="primary", key="bulk_delete_action_btn", use_container_width=True):
+                    selected_ids = []
+                    selected_names = []
+                    for doc_id, doc in indexed_docs.items():
+                        if doc.get("filename") in st.session_state.selected_docs:
+                            selected_ids.append(doc_id)
+                            selected_names.append(doc.get("filename"))
+                    confirm_bulk_delete_dialog(selected_ids, selected_names)
+            with col_b2:
+                # Zip and Download selected documents
+                selected_names_list = list(st.session_state.selected_docs)
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+                    for doc_name in selected_names_list:
+                        file_bytes = get_file_bytes(doc_name)
+                        if file_bytes:
+                            zip_file.writestr(doc_name, file_bytes)
+                zip_data = zip_buffer.getvalue()
+                
+                st.download_button(
+                    label="⬇ Download",
+                    data=zip_data,
+                    file_name="selected_clinical_documents.zip",
+                    key="bulk_download_action_btn",
+                    use_container_width=True
+                )
+            with col_b3:
+                if st.button("🔄 Re-index", key="bulk_reindex_action_btn", use_container_width=True):
+                    with st.spinner("Re-indexing..."):
+                        for doc_name in st.session_state.selected_docs:
+                            file_bytes = get_file_bytes(doc_name)
+                            if file_bytes:
+                                process_and_index_file(doc_name, file_bytes, st.session_state.vector_store)
+                    st.success("Re-indexed successfully!")
+                    st.rerun()
+            with col_b4:
+                if st.button("❌ Clear", key="bulk_clear_action_btn", use_container_width=True):
+                    st.session_state.selected_docs.clear()
+                    st.rerun()
+                    
+        # Table Headers with Select All
+        page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]
+        all_selected = all(f in st.session_state.selected_docs for f in page_docs_filenames) if page_docs_filenames else False
+        
+        col_hdr_chk, col_hdr_size, col_hdr_chunks = st.columns([6, 3, 3])
+        with col_hdr_chk:
+            select_all = st.checkbox("Select All", value=all_selected, key="select_all_chk")
+            if select_all != all_selected:
+                if select_all:
+                    for f in page_docs_filenames:
+                        st.session_state.selected_docs.add(f)
+                else:
+                    for f in page_docs_filenames:
+                        st.session_state.selected_docs.discard(f)
+                st.rerun()
+                
         st.markdown("""
         <div style='display: flex; font-weight: bold; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px; font-size: 0.85em; opacity: 0.9;'>
-            <div style='flex: 6; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>Document</div>
-            <div style='flex: 2; text-align: right;'>Size</div>
-            <div style='flex: 2; text-align: right;'>Chunks</div>
-            <div style='flex: 2; text-align: right; padding-right: 5px;'>Actions</div>
+            <div style='flex: 6;'>Document</div>
+            <div style='flex: 3; text-align: right;'>Size</div>
+            <div style='flex: 3; text-align: right; padding-right: 5px;'>Chunks</div>
         </div>
         """, unsafe_allow_html=True)
         
-        for doc_id, doc in list(filtered_docs.items()):
-            doc_name = doc.get("filename")
-            ts = doc.get("timestamp", "Unknown")[:16].replace("T", " ")
-            size = doc.get("file_size_kb")
-            
-            # Format size
-            if size is not None:
-                if size > 1024:
-                    size_str = f"{size/1024:.1f} MB"
+        if page_docs:
+            for doc_id, doc in page_docs:
+                doc_name = doc.get("filename")
+                size = doc.get("file_size_kb")
+                if size is not None:
+                    size_str = f"{size/1024:.1f} MB" if size > 1024 else f"{size:.0f} KB"
                 else:
-                    size_str = f"{size:.0f} KB"
-            else:
-                size_str = "Unknown"
-                
-            # Row render
-            r_col_name, r_col_size, r_col_chunks, r_col_act = st.columns([6, 2, 2, 2])
-            with r_col_name:
-                st.markdown(f"<span style='font-size: 0.8em; word-break: break-all; font-weight: 500;'>📄 {doc_name}</span>", unsafe_allow_html=True)
-            with r_col_size:
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{size_str}</div>", unsafe_allow_html=True)
-            with r_col_chunks:
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; opacity: 0.8;'>{doc.get('chunk_count')}</div>", unsafe_allow_html=True)
-            with r_col_act:
-                with st.popover("⚙️", key=f"pop_modal_{doc_id}"):
-                    st.markdown(f"**Document Details**\n- **Uploaded**: `{ts}`\n- **Status**: `🟢 Indexed`")
+                    size_str = "Unknown"
                     
-                    if st.button("🔍 Search Only This Document", key=f"search_modal_{doc_id}", use_container_width=True):
-                        st.session_state.query_filter = doc_name
-                        st.session_state.query_input = f"What are the main findings in {doc_name}?"
+                col_row_chk, col_row_name, col_row_size, col_row_chunks = st.columns([1, 5, 3, 3])
+                with col_row_chk:
+                    doc_checked = st.checkbox("", value=(doc_name in st.session_state.selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
+                    if doc_checked != (doc_name in st.session_state.selected_docs):
+                        if doc_checked:
+                            st.session_state.selected_docs.add(doc_name)
+                        else:
+                            st.session_state.selected_docs.discard(doc_name)
                         st.rerun()
-                        
-                    file_bytes = get_file_bytes(doc_name)
-                    st.download_button(
-                        label="📥 Download Original",
-                        data=file_bytes,
-                        file_name=doc_name,
-                        key=f"dl_modal_{doc_id}",
-                        use_container_width=True
-                    )
+                with col_row_name:
+                    # Row click loads details
+                    if st.button(f"📄 {doc_name}", key=f"btn_detail_{doc_id}", use_container_width=True):
+                        st.session_state.selected_detail_doc = doc
+                        st.rerun()
+                with col_row_size:
+                    st.markdown(f"<div style='text-align: right; font-size: 0.85em; opacity: 0.8; padding-top: 6px;'>{size_str}</div>", unsafe_allow_html=True)
+                with col_row_chunks:
+                    st.markdown(f"<div style='text-align: right; font-size: 0.85em; opacity: 0.8; padding-top: 6px;'>{doc.get('chunk_count', 0)}</div>", unsafe_allow_html=True)
                     
-                    if st.button("🗑️ Delete Document", key=f"del_modal_{doc_id}", type="primary", use_container_width=True):
-                        confirm_delete_dialog(doc_id, doc_name)
-            st.markdown("<hr style='margin: 4px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
-    else:
-        if indexed_docs:
-            st.info("No matching documents found.")
+                st.markdown("<hr style='margin: 4px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.03);'/>", unsafe_allow_html=True)
+                
+            # Pagination Controls (Requirement 7)
+            st.markdown("<br/>", unsafe_allow_html=True)
+            col_p1, col_p2, col_p3, col_p4 = st.columns([3, 1, 1, 1])
+            with col_p1:
+                st.markdown(f"<span style='font-size: 0.8em; opacity: 0.85;'>Displaying **{start_index + 1}–{end_index}** of **{total_documents}** Documents</span>", unsafe_allow_html=True)
+            with col_p2:
+                if st.button("Previous", disabled=(current_page == 1), key="btn_page_prev", use_container_width=True):
+                    st.session_state.doc_page = max(1, current_page - 1)
+                    st.rerun()
+            with col_p3:
+                if st.button("Next", disabled=(current_page >= num_pages), key="btn_page_next", use_container_width=True):
+                    st.session_state.doc_page = min(num_pages, current_page + 1)
+                    st.rerun()
+            with col_p4:
+                page_sel = st.selectbox("Page", list(range(1, num_pages + 1)), index=current_page - 1, label_visibility="collapsed", key="page_sel_box")
+                if page_sel != current_page:
+                    st.session_state.doc_page = page_sel
+                    st.rerun()
         else:
-            st.info("ℹ️ No documents indexed yet. Upload files in the sidebar to begin.")
+            st.info("No matching documents found.")
+            
+    with col_details:
+        detail_doc = st.session_state.get("selected_detail_doc")
+        if detail_doc:
+            dfname = detail_doc.get("filename")
+            st.markdown(f"### 📋 File Metadata")
+            st.markdown(f"**File Name**: `{dfname}`")
+            st.markdown(f"**Status**: `🟢 Indexed`")
+            
+            dsize = detail_doc.get("file_size_kb")
+            if dsize is not None:
+                dsize_str = f"{dsize/1024:.1f} MB" if dsize > 1024 else f"{dsize:.0f} KB"
+            else:
+                dsize_str = "Unknown"
+                
+            st.markdown(f"**File Size**: `{dsize_str}`")
+            st.markdown(f"**Chunks**: `{detail_doc.get('chunk_count', 0)}`")
+            st.markdown(f"**Uploaded Date**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+            st.markdown(f"**Last Indexed**: `{detail_doc.get('timestamp', 'Unknown')[:16].replace('T', ' ')}`")
+            
+            dext = dfname.split(".")[-1].upper()
+            st.markdown(f"**File Type**: `{dext}`")
+            
+            # Additional metadata dictionary
+            st.markdown("**Metadata Attributes**:")
+            st.json(detail_doc.get("metadata", {}))
+            
+            st.markdown("---")
+            # Action Buttons inside detail panel
+            file_bytes = get_file_bytes(dfname)
+            st.download_button(
+                label="📥 Download Original",
+                data=file_bytes,
+                file_name=dfname,
+                key="detail_download_action_btn",
+                use_container_width=True
+            )
+            
+            if st.button("🔄 Re-index File", key="detail_reindex_action_btn", use_container_width=True):
+                with st.spinner("Re-indexing..."):
+                    process_and_index_file(dfname, file_bytes, st.session_state.vector_store)
+                st.success("Re-indexed successfully!")
+                st.rerun()
+                
+            if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
+                # Find doc_id
+                ddoc_id = None
+                for d_id, d in indexed_docs.items():
+                    if d.get("filename") == dfname:
+                        ddoc_id = d_id
+                        break
+                if ddoc_id:
+                    confirm_delete_dialog(ddoc_id, dfname)
+        else:
+            st.info("ℹ️ Select a document row to view detailed metadata and file actions.")
             
     # Admin Controls inside modal
     with st.expander("🛠️ Administrative Controls"):
         st.warning("⚠️ Warning: Rebuilding the index will permanently clear all vectors and delete files from persistent storage.")
         if st.button("⚙️ Rebuild / Clear Index", type="secondary", key="admin_rebuild_modal_btn", use_container_width=True):
-            rebuild_empty_index_workflow()
             rebuild_empty_index_workflow()
 
 def sync_index_if_version_changed():
@@ -1224,6 +1432,20 @@ if "vector_store" not in st.session_state:
 else:
     sync_index_if_version_changed()
 
+# Initialize document manager state (Requirement 5)
+if 'selected_docs' not in st.session_state:
+    st.session_state.selected_docs = set()
+if 'selected_detail_doc' not in st.session_state:
+    st.session_state.selected_detail_doc = None
+if 'doc_page' not in st.session_state:
+    st.session_state.doc_page = 1
+if 'doc_status_filter' not in st.session_state:
+    st.session_state.doc_status_filter = "All"
+if 'doc_type_filter' not in st.session_state:
+    st.session_state.doc_type_filter = "All"
+if 'doc_sort_filter' not in st.session_state:
+    st.session_state.doc_sort_filter = "Newest"
+
 st.title("📚 ClinicalDocs AI")
 st.caption("Clinical Knowledge Assistant")
 
@@ -1355,17 +1577,6 @@ if uploaded:
 
 # Startup check complete. Rendering centered search interface (Requirement 1 & 5)
 
-# Optional search filter info (Requirement 5)
-if st.session_state.get("query_filter"):
-    col_f_badge, col_f_clear = st.columns([5, 1])
-    with col_f_badge:
-        st.info(f"🔍 **Active Document Scope**: `{st.session_state.query_filter}` (Only this document is searched)")
-    with col_f_clear:
-        if st.button("❌ Clear", key="clear_filter_btn", use_container_width=True):
-            st.session_state.query_filter = None
-            st.session_state.query_input = ""
-            st.rerun()
-
 q = st.text_area(
     "Ask anything about your clinical documents...",
     height=110,
@@ -1374,6 +1585,30 @@ q = st.text_area(
     key="query_input_box",
     label_visibility="collapsed"
 )
+
+# Search Scope display below search textbox (Search Box section)
+selected_docs_list = list(st.session_state.get("selected_docs", set()))
+if len(selected_docs_list) == 0:
+    st.markdown("""
+    <p style='font-size: 0.85em; opacity: 0.8; margin-top: 5px; margin-bottom: 2px; font-weight: 600;'>Search Scope</p>
+    <div style='font-size: 0.9em; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05);'>
+        🌍 Searching All Documents
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    col_scope_b, col_scope_c = st.columns([5, 2.5])
+    with col_scope_b:
+        st.markdown(f"""
+        <p style='font-size: 0.85em; opacity: 0.8; margin-top: 5px; margin-bottom: 2px; font-weight: 600;'>Search Scope</p>
+        <div style='font-size: 0.9em; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8;'>
+            📄 Searching {len(selected_docs_list)} Selected Documents
+        </div>
+        """, unsafe_allow_html=True)
+    with col_scope_c:
+        st.markdown("<div style='height: 22px;'></div>", unsafe_allow_html=True)
+        if st.button("❌ Clear Selection", key="clear_selection_search_scope_btn", use_container_width=True):
+            st.session_state.selected_docs.clear()
+            st.rerun()
 
 q_text = q
 
@@ -1416,10 +1651,11 @@ if st.session_state.searching:
         st.session_state.searching = False
         st.rerun()
     else:
+        sel_docs = list(st.session_state.selected_docs) if st.session_state.get("selected_docs") else None
         retriever = VectorStoreRetrieverAdapter(
             st.session_state.vector_store,
             k=settings.RETRIEVER_K,
-            filter_source=st.session_state.get("query_filter")
+            filter_sources=sel_docs
         )
         try:
             qa = create_qa_from_retriever(retriever)
@@ -1432,8 +1668,8 @@ if st.session_state.searching:
             with st.spinner("🧠 Generating Answer..."):
                 t_search_start = time.time()
                 search_q = q_text
-                if st.session_state.get("query_filter"):
-                    search_q = f"In document '{st.session_state.query_filter}': {q_text}"
+                if sel_docs:
+                    search_q = f"In documents {sel_docs}: {q_text}"
                 res_tuple = query_with_features(qa, search_q)
                 
                 if res_tuple:

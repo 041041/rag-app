@@ -159,10 +159,10 @@ class FAISSVectorStore(VectorStore):
             
         return ids
 
-    def search(self, query: str, k: int = 8, filter_source: str = None) -> List[Document]:
+    def search(self, query: str, k: int = 8, filter_sources: List[str] = None) -> List[Document]:
         """
         Performs inner product (cosine similarity) search on the normalized vectors.
-        Optionally filters results to a specific source file.
+        Optionally filters results to a specific set of source files.
         """
         if not self.docs or self.index.ntotal == 0:
             return []
@@ -176,7 +176,7 @@ class FAISSVectorStore(VectorStore):
         faiss.normalize_L2(qvec_np)
         
         # Search index with a higher candidate count if filtering to guarantee enough results
-        fetch_k = min(k * 15 if filter_source else k, self.index.ntotal)
+        fetch_k = min(k * 30 if filter_sources else k, self.index.ntotal)
         if fetch_k <= 0:
             return []
             
@@ -187,7 +187,7 @@ class FAISSVectorStore(VectorStore):
             if idx != -1 and idx in self.docs:
                 doc = self.docs[idx]
                 # Apply hard document source filter
-                if filter_source and doc.metadata.get("source") != filter_source:
+                if filter_sources and doc.metadata.get("source") not in filter_sources:
                     continue
                 new_doc = Document(
                     page_content=doc.page_content,

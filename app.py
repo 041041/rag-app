@@ -1355,18 +1355,22 @@ with st.expander("💡 Example Questions", expanded=False):
     if st.button("• What is ADaM?", key="ex_adam", use_container_width=False):
         st.session_state.query_input = "What is ADaM?"
         st.session_state.search_executed = False
+        st.session_state.last_error = None
         st.rerun()
     if st.button("• Explain SDTM.", key="ex_sdtm", use_container_width=False):
         st.session_state.query_input = "Explain SDTM."
         st.session_state.search_executed = False
+        st.session_state.last_error = None
         st.rerun()
     if st.button("• Show inclusion criteria.", key="ex_criteria", use_container_width=False):
         st.session_state.query_input = "Show inclusion criteria."
         st.session_state.search_executed = False
+        st.session_state.last_error = None
         st.rerun()
     if st.button("• Summarize methodology.", key="ex_methodology", use_container_width=False):
         st.session_state.query_input = "Summarize methodology."
         st.session_state.search_executed = False
+        st.session_state.last_error = None
         st.rerun()
 
 # Initialize search states
@@ -1374,12 +1378,16 @@ if "searching" not in st.session_state:
     st.session_state.searching = False
 if "search_executed" not in st.session_state:
     st.session_state.search_executed = False
+if "last_error" not in st.session_state:
+    st.session_state.last_error = None
 
 # Run search synchronously on rerun if searching state is triggered (Requirement 4)
 if st.session_state.searching:
+    st.session_state.last_error = None
     if st.session_state.vector_store.index.ntotal == 0:
-        st.error("❌ Index is empty. Please upload documents in the sidebar first.")
+        st.session_state.last_error = "❌ Index is empty. Please upload documents in the sidebar first."
         st.session_state.searching = False
+        st.rerun()
     else:
         retriever = VectorStoreRetrieverAdapter(
             st.session_state.vector_store,
@@ -1389,27 +1397,42 @@ if st.session_state.searching:
         try:
             qa = create_qa_from_retriever(retriever)
         except Exception as e:
-            st.error(f"❌ QA chain initialization failed: {e}")
+            st.session_state.last_error = f"❌ QA chain initialization failed: {e}"
             st.session_state.searching = False
-            st.stop()
+            st.rerun()
             
-        with st.spinner("🧠 Generating Answer..."):
-            t_search_start = time.time()
-            search_q = q_text
-            if st.session_state.get("query_filter"):
-                search_q = f"In document '{st.session_state.query_filter}': {q_text}"
-            result, was_cached, elapsed = query_with_features(qa, search_q)
-            search_execution_time = time.time() - t_search_start
-            logger.info(f"Search execution completed in {search_execution_time:.2f}s")
-            
-        if result:
-            st.session_state.search_executed = True
-            st.session_state.last_result = result
-            st.session_state.last_was_cached = was_cached
-            st.session_state.last_elapsed = elapsed
+        try:
+            with st.spinner("🧠 Generating Answer..."):
+                t_search_start = time.time()
+                search_q = q_text
+                if st.session_state.get("query_filter"):
+                    search_q = f"In document '{st.session_state.query_filter}': {q_text}"
+                res_tuple = query_with_features(qa, search_q)
+                
+                if res_tuple:
+                    result, was_cached, elapsed = res_tuple
+                    if result is not None:
+                        st.session_state.search_executed = True
+                        st.session_state.last_result = result
+                        st.session_state.last_was_cached = was_cached
+                        st.session_state.last_elapsed = elapsed
+                        st.session_state.last_error = None
+                    else:
+                        st.session_state.search_executed = False
+                        st.session_state.last_error = "All API attempts failed. Please verify your Gemini or Groq API keys."
+                else:
+                    st.session_state.search_executed = False
+                    st.session_state.last_error = "All API attempts failed. No response generated."
+        except Exception as e:
+            st.session_state.search_executed = False
+            st.session_state.last_error = f"Error during generation: {e}"
             
         st.session_state.searching = False
         st.rerun()
+
+# Render errors permanently if search failed (prevents disappearing on rerun)
+if st.session_state.get("last_error"):
+    st.error(st.session_state.last_error)
 
 # Focus Javascript helper on chip click (Requirement 3)
 if st.session_state.get("query_input"):

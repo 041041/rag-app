@@ -703,14 +703,51 @@ def document_management_dialog():
     """
     Redesigned enterprise Document Management Portal modal dialog (Requirement 5).
     """
+    # Read metadata database
+    metadata = get_document_metadata()
+    indexed_docs = metadata.get("documents", {})
+    
+    # Inline Bulk Delete Confirmation (Requirement 8 - no nesting dialogs)
+    if st.session_state.get("show_bulk_delete_confirm"):
+        selected_ids = []
+        selected_names = []
+        for doc_id, doc in indexed_docs.items():
+            if doc.get("filename") in st.session_state.selected_docs:
+                selected_ids.append(doc_id)
+                selected_names.append(doc.get("filename"))
+                
+        st.markdown("### 🗑️ Bulk Delete Confirmation")
+        count = len(selected_ids)
+        st.write(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
+        st.warning("⚠️ This action cannot be undone and will remove all corresponding vector chunks.")
+        
+        with st.expander("Show files being deleted"):
+            for f in selected_names:
+                st.write(f"- {f}")
+                
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            if st.button("Cancel Deletion", key="cancel_bulk_delete_btn", use_container_width=True):
+                st.session_state.show_bulk_delete_confirm = False
+                st.rerun()
+        with col_c2:
+            if st.button("Delete Permanent", key="confirm_bulk_delete_btn", type="primary", use_container_width=True):
+                for d_id in selected_ids:
+                    delete_document_workflow(d_id)
+                st.session_state.selected_docs = set()
+                # Clear checkbox keys
+                for k in list(st.session_state.keys()):
+                    if k.startswith("chk_"):
+                        st.session_state[k] = False
+                st.session_state.selected_detail_doc = None
+                st.session_state.show_bulk_delete_confirm = False
+                st.rerun()
+        return
+
     st.markdown(
         "<p style='color: #CBD5E1 !important; font-size: 16px !important; font-weight: 400 !important; opacity: 1 !important; margin-bottom: 20px;'>Redesigned clinical document repository for enterprise scaling (1,500+ files).</p>",
         unsafe_allow_html=True
     )
-    
-    # Read metadata database
-    metadata = get_document_metadata()
-    indexed_docs = metadata.get("documents", {})
     
     # Render brighter labels in a row (Requirement 2)
     col_l1, col_l2, col_l3, col_l4 = st.columns([45, 18, 18, 19])
@@ -797,13 +834,8 @@ def document_management_dialog():
                 st.markdown(f"<p style='font-size: 0.9em; font-weight: 700; color: #38bdf8; margin-top: 6px; margin-bottom: 0;'>{sel_label}</p>", unsafe_allow_html=True)
             with col_b1:
                 if st.button("🗑 Delete", type="primary", key="bulk_delete_action_btn", use_container_width=True):
-                    selected_ids = []
-                    selected_names = []
-                    for doc_id, doc in indexed_docs.items():
-                        if doc.get("filename") in st.session_state.selected_docs:
-                            selected_ids.append(doc_id)
-                            selected_names.append(doc.get("filename"))
-                    confirm_bulk_delete_dialog(selected_ids, selected_names)
+                    st.session_state.show_bulk_delete_confirm = True
+                    st.rerun()
             with col_b2:
                 # Zip and Download selected documents
                 selected_names_list = list(st.session_state.selected_docs)
@@ -981,31 +1013,51 @@ def document_management_dialog():
             st.json(detail_doc.get("metadata", {}))
             
             st.markdown("---")
-            # Action Buttons inside detail panel
-            file_bytes = get_file_bytes(dfname)
-            st.download_button(
-                label="📥 Download Original",
-                data=file_bytes,
-                file_name=dfname,
-                key="detail_download_action_btn",
-                use_container_width=True
-            )
-            
-            if st.button("🔄 Re-index File", key="detail_reindex_action_btn", use_container_width=True):
-                with st.spinner("Re-indexing..."):
-                    process_and_index_file(dfname, file_bytes, st.session_state.vector_store)
-                st.success("Re-indexed successfully!")
-                st.rerun()
+            # Inline Single Delete Confirmation (Requirement 8 - no nesting dialogs)
+            if st.session_state.get("show_single_delete_confirm") == dfname:
+                st.markdown("#### 🗑️ Confirm File Deletion")
+                st.write(f"Are you sure you want to permanently delete **{dfname}**?")
+                st.warning("⚠️ This action cannot be undone.")
+                col_sd1, col_sd2 = st.columns(2)
+                with col_sd1:
+                    if st.button("Cancel", key="cancel_single_delete_btn", use_container_width=True):
+                        st.session_state.show_single_delete_confirm = None
+                        st.rerun()
+                with col_sd2:
+                    if st.button("Delete Permanent", key="confirm_single_delete_btn", type="primary", use_container_width=True):
+                        # Find doc_id
+                        ddoc_id = None
+                        for d_id, d in indexed_docs.items():
+                            if d.get("filename") == dfname:
+                                ddoc_id = d_id
+                                break
+                        if ddoc_id:
+                            delete_document_workflow(ddoc_id)
+                            st.session_state.selected_docs.discard(dfname)
+                            st.session_state[f"chk_{ddoc_id}"] = False
+                            st.session_state.selected_detail_doc = None
+                        st.session_state.show_single_delete_confirm = None
+                        st.rerun()
+            else:
+                # Action Buttons inside detail panel
+                file_bytes = get_file_bytes(dfname)
+                st.download_button(
+                    label="📥 Download Original",
+                    data=file_bytes,
+                    file_name=dfname,
+                    key="detail_download_action_btn",
+                    use_container_width=True
+                )
                 
-            if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
-                # Find doc_id
-                ddoc_id = None
-                for d_id, d in indexed_docs.items():
-                    if d.get("filename") == dfname:
-                        ddoc_id = d_id
-                        break
-                if ddoc_id:
-                    confirm_delete_dialog(ddoc_id, dfname)
+                if st.button("🔄 Re-index File", key="detail_reindex_action_btn", use_container_width=True):
+                    with st.spinner("Re-indexing..."):
+                        process_and_index_file(dfname, file_bytes, st.session_state.vector_store)
+                    st.success("Re-indexed successfully!")
+                    st.rerun()
+                    
+                if st.button("🗑️ Delete File", key="detail_delete_action_btn", type="primary", use_container_width=True):
+                    st.session_state.show_single_delete_confirm = dfname
+                    st.rerun()
         else:
             st.info("ℹ️ Select a document row to view detailed metadata and file actions.")
             
@@ -1555,6 +1607,10 @@ if 'doc_type_filter' not in st.session_state:
     st.session_state.doc_type_filter = "All"
 if 'doc_sort_filter' not in st.session_state:
     st.session_state.doc_sort_filter = "Newest"
+if 'show_bulk_delete_confirm' not in st.session_state:
+    st.session_state.show_bulk_delete_confirm = False
+if 'show_single_delete_confirm' not in st.session_state:
+    st.session_state.show_single_delete_confirm = None
 
 st.title("📚 ClinicalDocs AI")
 st.caption("Clinical Knowledge Assistant")

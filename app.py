@@ -1066,11 +1066,13 @@ def document_management_dialog():
             if st.button("Cancel", key="btn_portal_cancel", use_container_width=True):
                 # Discard temporary selection state
                 st.session_state.temp_selected_docs = set(st.session_state.selected_docs)
+                st.session_state.show_doc_manager_dialog = False
                 st.rerun() # Closes the dialog modal
         with col_f_done:
             if st.button("Done", key="btn_portal_done", type="primary", use_container_width=True):
                 # Commit temporary selection to main state
                 st.session_state.selected_docs = set(st.session_state.temp_selected_docs)
+                st.session_state.show_doc_manager_dialog = False
                 st.rerun() # Closes the dialog modal and triggers parent page redraw
 
 def sync_index_if_version_changed():
@@ -1649,6 +1651,8 @@ if 'show_bulk_delete_confirm' not in st.session_state:
     st.session_state.show_bulk_delete_confirm = False
 if 'show_single_delete_confirm' not in st.session_state:
     st.session_state.show_single_delete_confirm = None
+if 'show_doc_manager_dialog' not in st.session_state:
+    st.session_state.show_doc_manager_dialog = False
 
 st.title("📚 ClinicalDocs AI")
 st.caption("Clinical Knowledge Assistant")
@@ -1722,7 +1726,8 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 if st.sidebar.button("Open Document Manager", key="btn_open_portal_sidebar", use_container_width=True):
     st.session_state.dialog_init_needed = True
-    document_management_dialog()
+    st.session_state.show_doc_manager_dialog = True
+    st.rerun()
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]
@@ -2066,7 +2071,11 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
         if st.button("👍 Yes"):
             st.success("Thanks for your feedback!")
     with col_f2:
-                    if st.button("👎 No"):
-                        feedback = st.text_input("What could be improved?")
-                        if feedback:
-                            st.info("Feedback recorded. Thank you!")
+        if st.button("👎 No"):
+            feedback = st.text_input("What could be improved?")
+            if feedback:
+                st.info("Feedback recorded. Thank you!")
+
+# Render the dialog modal if active (stay open across native reruns)
+if st.session_state.get("show_doc_manager_dialog", False):
+    document_management_dialog()

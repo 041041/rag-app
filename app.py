@@ -827,35 +827,32 @@ def document_management_dialog():
         
     with col_table:
         # Compact Bulk Action Toolbar (Requirement 8)
-        if len(st.session_state.selected_docs) > 0:
-            selected_count = len(st.session_state.selected_docs)
-            sel_label = f"📄 {selected_count} selected"
-            
-            col_b_sel, col_b1, col_b2 = st.columns([6, 3, 3])
-            with col_b_sel:
-                st.markdown(f"<p style='font-size: 0.9em; font-weight: 700; color: #38bdf8; margin-top: 6px; margin-bottom: 0;'>{sel_label}</p>", unsafe_allow_html=True)
-            with col_b1:
-                if st.button("🗑 Delete", type="primary", key="bulk_delete_action_btn", use_container_width=True):
-                    st.session_state.show_bulk_delete_confirm = True
-            with col_b2:
-                # Zip and Download selected documents
-                selected_names_list = list(st.session_state.selected_docs)
-                zip_buffer = io.BytesIO()
+        is_selected = len(st.session_state.selected_docs) > 0
+        col_b1, col_b2 = st.columns([6, 6])
+        with col_b1:
+            if st.button("🗑 Delete Selected", type="primary", key="bulk_delete_action_btn", use_container_width=True, disabled=not is_selected):
+                st.session_state.show_bulk_delete_confirm = True
+        with col_b2:
+            # Zip and Download selected documents
+            selected_names_list = list(st.session_state.selected_docs)
+            zip_buffer = io.BytesIO()
+            if is_selected:
                 with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                     for doc_name in selected_names_list:
                         file_bytes = get_file_bytes(doc_name)
                         if file_bytes:
                             zip_file.writestr(doc_name, file_bytes)
-                zip_data = zip_buffer.getvalue()
-                
-                st.download_button(
-                    label="⬇ Download",
-                    data=zip_data,
-                    file_name="selected_clinical_documents.zip",
-                    key="bulk_download_action_btn",
-                    use_container_width=True
-                )
-            st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+            zip_data = zip_buffer.getvalue()
+            
+            st.download_button(
+                label="⬇ Download Selected",
+                data=zip_data,
+                file_name="selected_clinical_documents.zip",
+                key="bulk_download_action_btn",
+                use_container_width=True,
+                disabled=not is_selected
+            )
+        st.markdown("<hr style='margin: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
                     
         # Table Headers with Select All callback inside header (Requirement 10 & 9)
         page_docs_filenames = [doc.get("filename") for doc_id, doc in page_docs]

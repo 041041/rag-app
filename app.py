@@ -749,26 +749,19 @@ def document_management_dialog():
         unsafe_allow_html=True
     )
     
-    # Render brighter labels in a row (Requirement 2)
-    col_l1, col_l2, col_l3, col_l4 = st.columns([45, 18, 18, 19])
-    with col_l1:
-        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Search Documents</p>", unsafe_allow_html=True)
-    with col_l2:
-        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Status</p>", unsafe_allow_html=True)
-    with col_l3:
-        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>File Type</p>", unsafe_allow_html=True)
-    with col_l4:
-        st.markdown("<p style='font-size: 0.85em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Sort By</p>", unsafe_allow_html=True)
-        
-    # Render inputs row with hidden labels
+    # Render compact filter controls in a single columns block (Requirement 2)
     col_f1, col_f2, col_f3, col_f4 = st.columns([45, 18, 18, 19])
     with col_f1:
+        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Search Documents</p>", unsafe_allow_html=True)
         doc_search = st.text_input("Search filename", placeholder="Search documents by filename...", value=st.session_state.get("doc_search_filter", ""), key="doc_search_modal_input", label_visibility="collapsed")
     with col_f2:
+        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Status</p>", unsafe_allow_html=True)
         status_filter = st.selectbox("Status", ["All", "Indexed", "Processing", "Failed"], index=["All", "Indexed", "Processing", "Failed"].index(st.session_state.get("doc_status_filter", "All")), key="doc_status_modal_sel", label_visibility="collapsed")
     with col_f3:
+        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>File Type</p>", unsafe_allow_html=True)
         type_filter = st.selectbox("File Type", ["All", "PDF", "DOCX", "TXT", "CSV"], index=["All", "PDF", "DOCX", "TXT", "CSV"].index(st.session_state.get("doc_type_filter", "All")), key="doc_type_modal_sel", label_visibility="collapsed")
     with col_f4:
+        st.markdown("<p style='font-size: 0.8em; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; opacity: 1;'>Sort By</p>", unsafe_allow_html=True)
         sort_filter = st.selectbox("Sort", ["Newest", "Oldest", "A-Z", "Z-A"], index=["Newest", "Oldest", "A-Z", "Z-A"].index(st.session_state.get("doc_sort_filter", "Newest")), key="doc_sort_modal_sel", label_visibility="collapsed")
         
     st.session_state.doc_search_filter = doc_search
@@ -820,6 +813,19 @@ def document_management_dialog():
     start_index = (current_page - 1) * 50
     end_index = min(start_index + 50, total_documents)
     page_docs = filtered_docs_list[start_index:end_index]
+    
+    total_docs_count = len(indexed_docs)
+    filtered_docs_count = len(filtered_docs_list)
+    selected_docs_count = len(st.session_state.selected_docs)
+    
+    st.markdown(f"""
+    <div style='font-size: 0.85em; opacity: 0.85; margin-bottom: 8px; font-weight: 500;'>
+        📊 Repository Stats: 
+        <span style='color: #cbd5e1; font-weight: 600;'>Total Documents:</span> {total_docs_count} | 
+        <span style='color: #cbd5e1; font-weight: 600;'>Filtered Results:</span> {filtered_docs_count} | 
+        <span style='color: #38bdf8; font-weight: 700;'>Selected Documents:</span> {selected_docs_count}
+    </div>
+    """, unsafe_allow_html=True)
     
     col_table, col_details = st.columns([7, 5])
     with col_table:
@@ -1498,10 +1504,15 @@ st.markdown("""
     div[role="dialog"] div[data-testid="stExpander"] summary svg {
         fill: #F8FAFC !important;
     }
-    /* Form inputs inside modal should remain highly readable */
-    div[role="dialog"] input, div[role="dialog"] textarea, div[role="dialog"] select {
-        color: #0f172a !important;
-        background-color: #ffffff !important;
+    /* Form inputs inside modal aligned to premium dark theme (Notion/Sharepoint mode) */
+    div[role="dialog"] input, 
+    div[role="dialog"] textarea, 
+    div[role="dialog"] select,
+    div[role="dialog"] div[data-basewidget="select"] > div {
+        color: #f8fafc !important;
+        background-color: #1e293b !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 6px !important;
     }
     div[data-testid="stPopoverBody"] {
         background-color: rgb(30, 41, 59) !important;
@@ -1553,25 +1564,52 @@ st.markdown("""
         line-height: 1.2 !important;
         transition: all 0.2s ease !important;
         width: 100% !important;
-        height: 28px !important;
+        height: 26px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
     }
     div[role="dialog"] button[data-basebuttonstyle="secondary"]:hover {
         color: #38bdf8 !important;
         background-color: rgba(255, 255, 255, 0.05) !important;
     }
     
-    /* Center align buttons inside the 3rd, 4th, and 5th columns (Status, Size, Chunks) */
+    /* Clean centered text for Status, Size, and Chunks columns (Google Drive style) */
     div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button,
     div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button,
     div[role="dialog"] div[data-testid="column"]:nth-of-type(5) button {
+        background-color: transparent !important;
+        background: transparent !important;
+        border: none !important;
+        color: #cbd5e1 !important;
         text-align: center !important;
         justify-content: center !important;
-        margin: 0 auto !important;
+        font-weight: 400 !important;
+        box-shadow: none !important;
+    }
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(3) button:hover,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(4) button:hover,
+    div[role="dialog"] div[data-testid="column"]:nth-of-type(5) button:hover {
+        color: #38bdf8 !important;
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        text-decoration: underline !important;
+    }
+    
+    /* Style all dialog buttons to have uniform premium heights and widths */
+    div[role="dialog"] button {
+        height: 32px !important;
+        line-height: 32px !important;
+        padding: 0 10px !important;
+        font-size: 0.85em !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
     }
     
     /* Make document column alignment compact like a list directory (Google Drive style) */
     div[role="dialog"] div[data-testid="column"] {
-        padding: 1px !important;
+        padding: 0px !important;
+        margin: 0px !important;
     }
     
     /* Vertically center checkbox column contents */

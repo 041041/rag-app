@@ -5,8 +5,13 @@ import sys
 # Prevent torchvision import errors from optional Hugging Face transformers vision models
 from unittest.mock import MagicMock
 if "torchvision" not in sys.modules:
+    import importlib.machinery
     torchvision_mock = MagicMock()
+    torchvision_mock.__spec__ = importlib.machinery.ModuleSpec(name="torchvision", loader=None)
+    
     torchvision_io_mock = MagicMock()
+    torchvision_io_mock.__spec__ = importlib.machinery.ModuleSpec(name="torchvision.io", loader=None)
+    
     torchvision_mock.io = torchvision_io_mock
     sys.modules["torchvision"] = torchvision_mock
     sys.modules["torchvision.io"] = torchvision_io_mock

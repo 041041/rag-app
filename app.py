@@ -256,12 +256,14 @@ def _extract_text_from_llm_response(raw):
 # -------------------------
 class SimpleQAWrapper:
     """
-    Robust fallback QA wrapper that prefers ChatGoogleGenerativeAI.invoke(str).
+    Robust fallback QA wrapper that prefers ChatGoogleGenerativeAI.invoke(str)
+    and supports an automatic secondary LLM fallback.
     """
-    def __init__(self, llm, retriever, prompt_template):
+    def __init__(self, llm, retriever, prompt_template, fallback_llm=None):
         self.llm = llm
         self.retriever = retriever
         self.prompt = prompt_template
+        self.fallback_llm = fallback_llm
 
     def _build_input(self, query: str):
         docs = self.retriever.get_relevant_documents(query)
@@ -272,12 +274,12 @@ class SimpleQAWrapper:
             prompt_text = f"Question: {query}\nContext:\n{context}"
         return prompt_text, docs
 
-    def _call_llm_variants(self, prompt_text: str):
+    def _call_llm_single(self, llm_instance, prompt_text: str):
         last_raw = None
         errs = []
 
         # 1. Try invoke method
-        inv_fn = getattr(self.llm, "invoke", None)
+        inv_fn = getattr(llm_instance, "invoke", None)
         if callable(inv_fn):
             # A. Try invoking with a list of HumanMessage (LangChain standard)
             if HumanMessage is not None:
@@ -316,7 +318,7 @@ class SimpleQAWrapper:
                 errs.append(f"invoke(RawString) failed: {e}")
 
         # 2. Try generate method with list-of-dicts
-        gen_fn = getattr(self.llm, "generate", None)
+        gen_fn = getattr(llm_instance, "generate", None)
         if callable(gen_fn):
             try:
                 raw = gen_fn([{"content": prompt_text}])
@@ -328,7 +330,7 @@ class SimpleQAWrapper:
 
         # 3. Other callables
         for name in ("predict", "create", "chat", "respond", "answer"):
-            fn = getattr(self.llm, name, None)
+            fn = getattr(llm_instance, name, None)
             if not callable(fn):
                 continue
             try:
@@ -344,6 +346,24 @@ class SimpleQAWrapper:
         raw_preview = repr(last_raw)[:1000] if last_raw is not None else "<no raw captured>"
         detailed_errors = " | ".join(errs)
         raise RuntimeError(f"No LLM invocation succeeded. Errors: {detailed_errors} | raw_type: {raw_type} | raw_preview: {raw_preview}")
+
+    def _call_llm_variants(self, prompt_text: str):
+        try:
+            return self._call_llm_single(self.llm, prompt_text)
+        except Exception as primary_error:
+            if self.fallback_llm is not None:
+                logger.warning(f"⚠️ Primary LLM failed: {primary_error}. Falling back to secondary LLM...")
+                try:
+                    return self._call_llm_single(self.fallback_llm, prompt_text)
+                except Exception as fallback_error:
+                    logger.error(f"❌ Both LLM options failed. Primary: {primary_error}. Fallback: {fallback_error}")
+                    raise RuntimeError(
+                        f"Both primary and fallback LLMs failed.\n"
+                        f"Primary model ({getattr(self.llm, 'model', getattr(self.llm, 'model_name', 'Unknown'))}) error: {primary_error}\n"
+                        f"Fallback model ({getattr(self.fallback_llm, 'model', getattr(self.fallback_llm, 'model_name', 'Unknown'))}) error: {fallback_error}"
+                    )
+            else:
+                raise primary_error
 
     def run(self, query: str):
         prompt_text, docs = self._build_input(query)
@@ -365,27 +385,49 @@ def create_qa_from_retriever(retriever):
     has_gemini = bool(os.environ.get("GOOGLE_API_KEY"))
     has_groq = bool(os.environ.get("GROQ_API_KEY"))
     
-    if not has_gemini and has_groq:
-        if ChatGroq is None:
-            raise RuntimeError("ChatGroq (langchain-groq) is not available; install it.")
-        model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-        llm = ChatGroq(model_name=model_name, temperature=0.2)
-        logger.info(f"Initialized Groq LLM with model: {model_name}")
-    else:
-        if ChatGoogleGenerativeAI is None:
-            raise RuntimeError("ChatGoogleGenerativeAI (langchain-google-genai) not available; install it.")
-        llm = ChatGoogleGenerativeAI(
-            model=settings.LLM_MODEL,
-            temperature=0.2,
-            convert_system_message_to_human=True,  # Required for gemini-2.0-flash
-        )
-        logger.info(f"Initialized Gemini LLM with model: {settings.LLM_MODEL}")
-        
+    primary_llm = None
+    fallback_llm = None
+    
+    # 1. Instantiate primary Gemini LLM if key is present
+    if has_gemini and ChatGoogleGenerativeAI is not None:
+        try:
+            primary_llm = ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                temperature=0.2,
+                convert_system_message_to_human=True,  # Required for gemini-2.0-flash
+            )
+            logger.info(f"Initialized primary Gemini LLM with model: {settings.LLM_MODEL}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize primary Gemini LLM: {e}")
+            
+    # 2. Instantiate Groq LLM if key is present
+    if has_groq and ChatGroq is not None:
+        try:
+            groq_model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+            llm_instance = ChatGroq(model_name=groq_model, temperature=0.2)
+            if primary_llm is None:
+                primary_llm = llm_instance
+                logger.info(f"Initialized primary Groq LLM with model: {groq_model}")
+            else:
+                fallback_llm = llm_instance
+                logger.info(f"Initialized fallback Groq LLM with model: {groq_model}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Groq LLM: {e}")
+
+    if primary_llm is None:
+        raise RuntimeError("No LLM providers (Gemini or Groq) are available or could be initialized.")
+
+    # 3. If fallback is active, bypass RetrievalQA and use SimpleQAWrapper directly
+    # to guarantee rate-limit intercept and fallback execution.
+    if fallback_llm is not None:
+        logger.info("Using Fallback-enabled SimpleQAWrapper to handle API rate limits robustly.")
+        return SimpleQAWrapper(llm=primary_llm, retriever=retriever, prompt_template=prompt_template, fallback_llm=fallback_llm)
+
     try:
         if RetrievalQA is None:
             raise ImportError("RetrievalQA not importable in this environment.")
         qa = RetrievalQA.from_chain_type(
-            llm=llm,
+            llm=primary_llm,
             retriever=retriever,
             return_source_documents=True,
             chain_type="stuff",
@@ -394,7 +436,7 @@ def create_qa_from_retriever(retriever):
         return qa
     except Exception as e:
         logger.warning(f"⚠️ Could not create RetrievalQA chain (falling back to internal wrapper): {e}")
-        return SimpleQAWrapper(llm=llm, retriever=retriever, prompt_template=prompt_template)
+        return SimpleQAWrapper(llm=primary_llm, retriever=retriever, prompt_template=prompt_template, fallback_llm=fallback_llm)
 
 
 # -------------------------

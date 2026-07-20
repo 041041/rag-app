@@ -1,6 +1,6 @@
 # Clinical Trial RAG Application with Cloudflare R2 & FAISS
 
-A Streamlit RAG (Retrieval-Augmented Generation) application configured to ingest clinical trial documents, index them using HuggingFace embeddings (`all-MiniLM-L6-v2`) and FAISS, and query them with **Google Gemini** (`gemini-2.0-flash`) or **Groq** (`llama-3.3-70b-versatile`). Persistent storage is managed through Cloudflare R2 with automatic backups and multi-user optimistic concurrency lock protection.
+A Streamlit RAG (Retrieval-Augmented Generation) application configured to ingest clinical trial documents, index them using HuggingFace embeddings (`all-MiniLM-L6-v2`) and FAISS, and query them with **Google Gemini** (`gemini-2.0-flash`) or **Groq** (`qwen/qwen3.6-27b`). Persistent storage is managed through Cloudflare R2 with automatic backups and multi-user optimistic concurrency lock protection.
 
 ## Architecture Flow
 
@@ -24,7 +24,7 @@ FAISS IndexIDMap (performs fast vector similarity searches)
       │
       ▼
 Google Gemini `gemini-2.0-flash`  (primary LLM — free tier)
-   OR Groq `llama-3.3-70b-versatile`  (fallback LLM — free tier)
+   OR Groq `qwen/qwen3.6-27b`  (fallback LLM — free tier)
 ```
 
 ## Features
@@ -64,9 +64,9 @@ R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 R2_BUCKET_NAME=your_r2_bucket_name
 GOOGLE_API_KEY=your_google_gemini_api_key   # Uses gemini-2.0-flash (free)
-# GROQ_API_KEY=your_groq_api_key            # Optional fallback: llama-3.3-70b-versatile
+# GROQ_API_KEY=your_groq_api_key            # Optional fallback: qwen/qwen3.6-27b
 # LLM_MODEL=gemini-2.0-flash               # Override Gemini model
-# GROQ_MODEL=llama-3.3-70b-versatile       # Override Groq model
+# GROQ_PRIMARY_MODEL=qwen/qwen3.6-27b      # Override Groq primary model
 ```
 
 ### 3. Install Dependencies

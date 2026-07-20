@@ -26,42 +26,67 @@ except ImportError:
 @st.cache_resource
 def get_embeddings_model():
     """
-    Load the HuggingFace embedding model.
+    Load the HuggingFace embedding model with offline support.
+    Preferred order:
+      1. models/bge-small-en-v1.5
+      2. BAAI/bge-small-en-v1.5 (download and save locally if missing)
+      3. models/all-MiniLM-L6-v2 (local offline fallback)
     """
     import os
-    print(f"🚀 [FAISSStore] Configured EMBED_MODEL setting: {settings.EMBED_MODEL}", flush=True)
+    from pathlib import Path
     
-    # 2. Check and print local path existence details
-    local_path = settings.EMBED_MODEL
-    print(f"🚀 [FAISSStore] Checking if local path '{local_path}' exists...", flush=True)
-    exists = os.path.exists(local_path)
-    print(f"🚀 [FAISSStore] os.path.exists('{local_path}'): {exists}", flush=True)
+    base_dir = Path(__file__).resolve().parent.parent
+    models_dir = base_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
     
-    if os.path.exists("models"):
+    # 1. Try BAAI/bge-small-en-v1.5 local path
+    local_bge_path = models_dir / "bge-small-en-v1.5"
+    if local_bge_path.exists():
         try:
-            print(f"🚀 [FAISSStore] os.listdir('models'): {os.listdir('models')}", flush=True)
+            logger.info("Loading BAAI/bge-small-en-v1.5 from local disk...")
+            model = HuggingFaceEmbeddings(
+                model_name=str(local_bge_path),
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+            logger.info("Successfully loaded local BAAI/bge-small-en-v1.5 model.")
+            return model
         except Exception as e:
-            print(f"🚀 [FAISSStore] Failed to list 'models' dir: {e}", flush=True)
+            logger.error(f"Failed to load local BAAI/bge-small-en-v1.5: {e}")
             
-    # 5. Force load using filesystem path. If it does not exist, raise an error to prevent fallback
-    if not exists:
-        raise FileNotFoundError(
-            f"❌ [FAISSStore] Offline model path '{local_path}' not found on container filesystem! "
-            "Preventing silent fallback to Hugging Face Hub."
+    # 2. Try downloading BAAI/bge-small-en-v1.5 if missing (and we are online)
+    try:
+        logger.info("Local BAAI/bge-small-en-v1.5 not found. Downloading from Hugging Face Hub...")
+        model = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-small-en-v1.5",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
         )
+        logger.info(f"Saving downloaded BAAI/bge-small-en-v1.5 model to {local_bge_path} for offline use...")
+        client = getattr(model, "_client", None)
+        if client is not None and hasattr(client, "save"):
+            client.save(str(local_bge_path))
+        logger.info("Successfully downloaded and saved BAAI/bge-small-en-v1.5 model.")
+        return model
+    except Exception as e:
+        logger.warning(f"Failed to download BAAI/bge-small-en-v1.5: {e}. Falling back to models/all-MiniLM-L6-v2...")
         
-    print(f"🚀 [FAISSStore] Loading HuggingFace embeddings model from local disk path: {local_path}...", flush=True)
-    if HuggingFaceEmbeddings is None:
-        raise RuntimeError("HuggingFaceEmbeddings not available — install langchain-huggingface.")
-        
-    # Instantiate using local filesystem path
-    model = HuggingFaceEmbeddings(
-        model_name=local_path,
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
-    print("🚀 [FAISSStore] HuggingFace embeddings model loaded successfully from local disk.", flush=True)
-    return model
+    # 3. Try fallback models/all-MiniLM-L6-v2
+    local_minilm_path = models_dir / "all-MiniLM-L6-v2"
+    if local_minilm_path.exists():
+        try:
+            logger.info("Loading all-MiniLM-L6-v2 from local disk...")
+            model = HuggingFaceEmbeddings(
+                model_name=str(local_minilm_path),
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+            logger.info("Successfully loaded local all-MiniLM-L6-v2 model.")
+            return model
+        except Exception as e:
+            logger.error(f"Failed to load local all-MiniLM-L6-v2: {e}")
+            
+    raise RuntimeError("❌ [FAISSStore] No embedding models could be loaded or downloaded.")
 
 class FAISSVectorStore(VectorStore):
     """

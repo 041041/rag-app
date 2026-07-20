@@ -43,8 +43,11 @@ R2_INDEXES_PREFIX = "indexes/"
 R2_BACKUPS_PREFIX = "backups/"
 
 # RAG specific configurations
-EMBED_MODEL = os.getenv("EMBED_MODEL", "models/all-MiniLM-L6-v2")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "models/bge-small-en-v1.5")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+PRIMARY_PROVIDER = os.getenv("PRIMARY_PROVIDER", "gemini")
+GROQ_PRIMARY_MODEL = os.getenv("GROQ_PRIMARY_MODEL", "qwen/qwen3.6-27b")
+GROQ_SECONDARY_MODEL = os.getenv("GROQ_SECONDARY_MODEL", "openai/gpt-oss-20b")
 RETRIEVER_K = 8
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150

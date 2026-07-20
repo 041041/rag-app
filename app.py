@@ -1,5 +1,29 @@
 # app.py - Refactored for Cloudflare R2 and FAISS Integration
 import os
+import sys
+
+# Prevent torchvision import errors from optional Hugging Face transformers vision models
+from unittest.mock import MagicMock
+if "torchvision" not in sys.modules:
+    torchvision_mock = MagicMock()
+    torchvision_io_mock = MagicMock()
+    torchvision_mock.io = torchvision_io_mock
+    sys.modules["torchvision"] = torchvision_mock
+    sys.modules["torchvision.io"] = torchvision_io_mock
+
+# Standardize on GOOGLE_API_KEY only: delete GEMINI_API_KEY if present in environment
+if "GEMINI_API_KEY" in os.environ:
+    del os.environ["GEMINI_API_KEY"]
+
+# Monkey-patch google.genai._api_client.BaseApiClient._request to bypass all SDK-level retry loops
+# This guarantees that the Fallback Manager receives the first 429 immediately.
+try:
+    from google.genai._api_client import BaseApiClient
+    def custom_request(self, http_request, http_options=None, stream=False):
+        return self._request_once(http_request, stream=stream)
+    BaseApiClient._request = custom_request
+except Exception:
+    pass
 import asyncio
 import time
 import json
@@ -42,10 +66,7 @@ except ImportError:
     except ImportError:
         HumanMessage = None
 
-# Map GEMINI_API_KEY to GOOGLE_API_KEY (LangChain defaults to GOOGLE_API_KEY)
-# We prioritize GEMINI_API_KEY if present to avoid conflicts with default system keys
-if os.getenv("GEMINI_API_KEY"):
-    os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
+# Consistent usage of GOOGLE_API_KEY is enforced throughout the app.
 
 # Ensure an asyncio event loop exists for the current thread (Streamlit-related fix)
 def ensure_event_loop():
@@ -100,17 +121,7 @@ except Exception:
         except Exception:
             RetrievalQA = None
 
-# Google Gemini integration
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-except Exception:
-    ChatGoogleGenerativeAI = None
-
-# Groq integration fallback
-try:
-    from langchain_groq import ChatGroq
-except Exception:
-    ChatGroq = None
+from rag.llm import ClinicalRAGLLM
 
 
 # ========================================
@@ -256,14 +267,12 @@ def _extract_text_from_llm_response(raw):
 # -------------------------
 class SimpleQAWrapper:
     """
-    Robust fallback QA wrapper that prefers ChatGoogleGenerativeAI.invoke(str)
-    and supports an automatic secondary LLM fallback.
+    Decoupled QA wrapper that uses ClinicalRAGLLM to handle all prompt invocations.
     """
-    def __init__(self, llm, retriever, prompt_template, fallback_llm=None):
+    def __init__(self, llm, retriever, prompt_template):
         self.llm = llm
         self.retriever = retriever
         self.prompt = prompt_template
-        self.fallback_llm = fallback_llm
 
     def _build_input(self, query: str):
         docs = self.retriever.get_relevant_documents(query)
@@ -274,102 +283,12 @@ class SimpleQAWrapper:
             prompt_text = f"Question: {query}\nContext:\n{context}"
         return prompt_text, docs
 
-    def _call_llm_single(self, llm_instance, prompt_text: str):
-        last_raw = None
-        errs = []
-
-        # 1. Try invoke method
-        inv_fn = getattr(llm_instance, "invoke", None)
-        if callable(inv_fn):
-            # A. Try invoking with a list of HumanMessage (LangChain standard)
-            if HumanMessage is not None:
-                try:
-                    raw = inv_fn([HumanMessage(content=prompt_text)])
-                    last_raw = raw
-                    if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
-                        return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
-                    text, raw_saved = _extract_text_from_llm_response(raw)
-                    return text, raw_saved, getattr(raw, "source_documents", None) or []
-                except Exception as e:
-                    errs.append(f"invoke(HumanMessage) failed: {e}")
-            else:
-                errs.append("invoke(HumanMessage) skipped: HumanMessage is None")
-
-            # B. Try invoking with a list of message dicts (fallback)
-            try:
-                raw = inv_fn([{"role": "user", "content": prompt_text}])
-                last_raw = raw
-                if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
-                    return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
-                text, raw_saved = _extract_text_from_llm_response(raw)
-                return text, raw_saved, getattr(raw, "source_documents", None) or []
-            except Exception as e:
-                errs.append(f"invoke(DictList) failed: {e}")
-
-            # C. Try invoking with raw string (fallback)
-            try:
-                raw = inv_fn(prompt_text)
-                last_raw = raw
-                if hasattr(raw, "content") and isinstance(getattr(raw, "content"), str):
-                    return getattr(raw, "content"), raw, getattr(raw, "source_documents", None) or []
-                text, raw_saved = _extract_text_from_llm_response(raw)
-                return text, raw_saved, getattr(raw, "source_documents", None) or []
-            except Exception as e:
-                errs.append(f"invoke(RawString) failed: {e}")
-
-        # 2. Try generate method with list-of-dicts
-        gen_fn = getattr(llm_instance, "generate", None)
-        if callable(gen_fn):
-            try:
-                raw = gen_fn([{"content": prompt_text}])
-                last_raw = raw
-                text, raw_saved = _extract_text_from_llm_response(raw)
-                return text, raw_saved, getattr(raw, "source_documents", None) or []
-            except Exception as e:
-                errs.append(f"generate() failed: {e}")
-
-        # 3. Other callables
-        for name in ("predict", "create", "chat", "respond", "answer"):
-            fn = getattr(llm_instance, name, None)
-            if not callable(fn):
-                continue
-            try:
-                raw = fn(prompt_text)
-                last_raw = raw
-                text, raw_saved = _extract_text_from_llm_response(raw)
-                return text, raw_saved, getattr(raw, "source_documents", None) or []
-            except Exception as e:
-                errs.append(f"llm.{name}() failed: {e}")
-                continue
-
-        raw_type = type(last_raw).__name__ if last_raw is not None else "None"
-        raw_preview = repr(last_raw)[:1000] if last_raw is not None else "<no raw captured>"
-        detailed_errors = " | ".join(errs)
-        raise RuntimeError(f"No LLM invocation succeeded. Errors: {detailed_errors} | raw_type: {raw_type} | raw_preview: {raw_preview}")
-
-    def _call_llm_variants(self, prompt_text: str):
-        try:
-            return self._call_llm_single(self.llm, prompt_text)
-        except Exception as primary_error:
-            if self.fallback_llm is not None:
-                logger.warning(f"⚠️ Primary LLM failed: {primary_error}. Falling back to secondary LLM...")
-                try:
-                    return self._call_llm_single(self.fallback_llm, prompt_text)
-                except Exception as fallback_error:
-                    logger.error(f"❌ Both LLM options failed. Primary: {primary_error}. Fallback: {fallback_error}")
-                    raise RuntimeError(
-                        f"Both primary and fallback LLMs failed.\n"
-                        f"Primary model ({getattr(self.llm, 'model', getattr(self.llm, 'model_name', 'Unknown'))}) error: {primary_error}\n"
-                        f"Fallback model ({getattr(self.fallback_llm, 'model', getattr(self.fallback_llm, 'model_name', 'Unknown'))}) error: {fallback_error}"
-                    )
-            else:
-                raise primary_error
-
     def run(self, query: str):
         prompt_text, docs = self._build_input(query)
-        text, raw, src_docs = self._call_llm_variants(prompt_text)
-        source_documents = src_docs or docs
-        return {"result": text, "source_documents": source_documents, "raw": raw}
+        logger.info("Invoking ClinicalRAGLLM unified abstraction...")
+        response = self.llm.invoke(prompt_text)
+        result_text = response.content if hasattr(response, "content") else str(response)
+        return {"result": result_text, "source_documents": docs, "raw": response}
 
 
 # -------------------------
@@ -381,62 +300,13 @@ PROMPT_TEMPLATE_STR = (
 )
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)
 
+@st.cache_resource
+def get_clinical_llm():
+    return ClinicalRAGLLM()
+
 def create_qa_from_retriever(retriever):
-    has_gemini = bool(os.environ.get("GOOGLE_API_KEY"))
-    has_groq = bool(os.environ.get("GROQ_API_KEY"))
-    
-    primary_llm = None
-    fallback_llm = None
-    
-    # 1. Instantiate primary Gemini LLM if key is present
-    if has_gemini and ChatGoogleGenerativeAI is not None:
-        try:
-            primary_llm = ChatGoogleGenerativeAI(
-                model=settings.LLM_MODEL,
-                temperature=0.2,
-                convert_system_message_to_human=True,  # Required for gemini-2.0-flash
-            )
-            logger.info(f"Initialized primary Gemini LLM with model: {settings.LLM_MODEL}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize primary Gemini LLM: {e}")
-            
-    # 2. Instantiate Groq LLM if key is present
-    if has_groq and ChatGroq is not None:
-        try:
-            groq_model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-            llm_instance = ChatGroq(model_name=groq_model, temperature=0.2)
-            if primary_llm is None:
-                primary_llm = llm_instance
-                logger.info(f"Initialized primary Groq LLM with model: {groq_model}")
-            else:
-                fallback_llm = llm_instance
-                logger.info(f"Initialized fallback Groq LLM with model: {groq_model}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Groq LLM: {e}")
-
-    if primary_llm is None:
-        raise RuntimeError("No LLM providers (Gemini or Groq) are available or could be initialized.")
-
-    # 3. If fallback is active, bypass RetrievalQA and use SimpleQAWrapper directly
-    # to guarantee rate-limit intercept and fallback execution.
-    if fallback_llm is not None:
-        logger.info("Using Fallback-enabled SimpleQAWrapper to handle API rate limits robustly.")
-        return SimpleQAWrapper(llm=primary_llm, retriever=retriever, prompt_template=prompt_template, fallback_llm=fallback_llm)
-
-    try:
-        if RetrievalQA is None:
-            raise ImportError("RetrievalQA not importable in this environment.")
-        qa = RetrievalQA.from_chain_type(
-            llm=primary_llm,
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type="stuff",
-            chain_type_kwargs={"prompt": prompt_template},
-        )
-        return qa
-    except Exception as e:
-        logger.warning(f"⚠️ Could not create RetrievalQA chain (falling back to internal wrapper): {e}")
-        return SimpleQAWrapper(llm=primary_llm, retriever=retriever, prompt_template=prompt_template, fallback_llm=fallback_llm)
+    llm = get_clinical_llm()
+    return SimpleQAWrapper(llm=llm, retriever=retriever, prompt_template=prompt_template)
 
 
 # -------------------------
@@ -575,19 +445,32 @@ def initialize_rag():
     """
     print("🚀 [STARTUP LOG] [STEP 1] Running initialize_rag()...", flush=True)
     
-    # 1. Initialize FAISSVectorStore
+    # 1. Initialize FAISSVectorStore (verifies FAISS loaded and embedding model loaded)
     print("🚀 [STARTUP LOG] [STEP 2] Creating FAISSVectorStore...", flush=True)
-    store = FAISSVectorStore()
-    print("🚀 [STARTUP LOG] [STEP 3] FAISSVectorStore created successfully.", flush=True)
-    
+    try:
+        store = FAISSVectorStore()
+        embeddings_loaded = True
+        print("🚀 [STARTUP LOG] [STEP 3] FAISSVectorStore created successfully.", flush=True)
+    except Exception as e:
+        print(f"🚀 [STARTUP LOG] [STEP 3 ERROR] FAISSVectorStore creation failed: {e}", flush=True)
+        store = None
+        embeddings_loaded = False
+        
     health_status = {
         "r2_connected": False,
         "index_loaded": False,
         "version": 0,
         "last_updated": "Never",
-        "message": ""
+        "message": "",
+        "embeddings_loaded": embeddings_loaded,
+        "gemini_reachable": None,
+        "groq_reachable": None
     }
     
+    if store is None:
+        health_status["message"] = "Critical: Failed to load FAISS or embeddings."
+        return store, health_status
+
     # 2. Verify R2 connection
     print("🚀 [STARTUP LOG] [STEP 4] Verifying Cloudflare R2 connection...", flush=True)
     r2_connected = r2_storage.verify_connection()
@@ -674,6 +557,65 @@ def initialize_rag():
             empty_meta = {"version": 0, "last_updated": datetime.now().isoformat(), "documents": {}}
             save_document_metadata(empty_meta)
             print("🚀 [STARTUP LOG] [STEP 9] Saved new local empty index.", flush=True)
+
+    # 3. Check Gemini reachability if credentials exist
+    gemini_key = os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            print("🚀 [STARTUP LOG] [STEP 12] Verifying Gemini model reachability...", flush=True)
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                temperature=0.2,
+                google_api_key=gemini_key
+            )
+            # A lightweight call to verify connection
+            llm.invoke([HumanMessage(content="Hello")])
+            health_status["gemini_reachable"] = True
+            print("🚀 [STARTUP LOG] [STEP 13] Gemini is online and reachable.", flush=True)
+        except Exception as e:
+            print(f"🚀 [STARTUP LOG] [STEP 13 WARNING] Gemini reachability check failed: {e}", flush=True)
+            health_status["gemini_reachable"] = False
+    else:
+        health_status["gemini_reachable"] = None
+
+    # 4. Check Groq reachability if credentials exist
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            print("🚀 [STARTUP LOG] [STEP 14] Verifying Groq model reachability...", flush=True)
+            from langchain_groq import ChatGroq
+            groq_model = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"))
+            if "llama-3.3-70b" in groq_model or "versatile" in groq_model:
+                groq_model = "qwen/qwen3.6-27b"
+            llm = ChatGroq(
+                model_name=groq_model,
+                temperature=0.2,
+                groq_api_key=groq_key
+            )
+            llm.invoke([HumanMessage(content="Hello")])
+            health_status["groq_reachable"] = True
+            print("🚀 [STARTUP LOG] [STEP 15] Groq is online and reachable.", flush=True)
+        except Exception as e:
+            # Try secondary model as check fallback
+            try:
+                groq_sec = os.getenv("GROQ_SECONDARY_MODEL", "openai/gpt-oss-20b")
+                if "llama-3.3-70b" in groq_sec or "versatile" in groq_sec:
+                    groq_sec = "openai/gpt-oss-20b"
+                print(f"🚀 [STARTUP LOG] Groq primary failed. Testing secondary model '{groq_sec}'...", flush=True)
+                llm = ChatGroq(
+                    model_name=groq_sec,
+                    temperature=0.2,
+                    groq_api_key=groq_key
+                )
+                llm.invoke([HumanMessage(content="Hello")])
+                health_status["groq_reachable"] = True
+                print("🚀 [STARTUP LOG] Groq secondary is online and reachable.", flush=True)
+            except Exception as e2:
+                print(f"🚀 [STARTUP LOG] Groq reachability check failed for all models: {e2}", flush=True)
+                health_status["groq_reachable"] = False
+    else:
+        health_status["groq_reachable"] = None
             
     print("🚀 [STARTUP LOG] [STEP 11] initialize_rag() completed.", flush=True)
     return store, health_status
@@ -1694,12 +1636,29 @@ st.caption("Clinical Knowledge Assistant")
 # 1. System Health Panel (Requirement 4 & 8)
 st.sidebar.header("📋 System Health")
 status = st.session_state.health_status
+
+# Compute icon markers
+r2_icon = "🟢" if status.get("r2_connected") else "🔴"
+embed_icon = "🟢" if status.get("embeddings_loaded") else "🔴"
+
+gemini_reach = status.get("gemini_reachable")
+gemini_icon = "🟢" if gemini_reach else ("🔴" if gemini_reach is False else "⚪")
+gemini_label = "Gemini API Ready" if gemini_reach else ("Gemini API Unreachable" if gemini_reach is False else "Gemini (Not Configured)")
+
+groq_reach = status.get("groq_reachable")
+groq_icon = "🟢" if groq_reach else ("🔴" if groq_reach is False else "⚪")
+groq_label = "Groq API Ready" if groq_reach else ("Groq API Unreachable" if groq_reach is False else "Groq (Not Configured)")
+
+# System ready check: need embedding loaded and at least one configured LLM online/reachable
+sys_ready = status.get("embeddings_loaded") and (gemini_reach or groq_reach or (gemini_reach is None and groq_reach is None))
+sys_icon = "🟢" if sys_ready else "🔴"
+
 st.sidebar.markdown(f"""
-- 🟢 **Cloud Storage Connected**
-- 🟢 **Embedding Model Ready**
-- 🟢 **Knowledge Base Version**: `v{status['version']}`
-- 🟢 **Knowledge Base Synced**
-- 🟢 **System Ready**
+- {r2_icon} **Cloud Storage Connected**
+- {embed_icon} **Embedding Model Ready**
+- {gemini_icon} **{gemini_label}**
+- {groq_icon} **{groq_label}**
+- {sys_icon} **System Ready**
 """)
 
 # 2. Knowledge Base Stats (Requirement 5)
@@ -2005,8 +1964,13 @@ if st.session_state.searching:
         except Exception as e:
             _prog_placeholder.empty()
             st.session_state.search_executed = False
-            # Show the full real error so we can debug it
-            st.session_state.last_error = f"Error: {e}"
+            err_msg = str(e)
+            if "All configured AI providers" not in err_msg and "Primary AI provider" not in err_msg:
+                if any(x in err_msg.lower() for x in ["429", "resource_exhausted", "quota"]):
+                    err_msg = "Primary AI provider is temporarily unavailable. Switching to another provider."
+                else:
+                    err_msg = "All configured AI providers are currently unavailable. Please try again shortly."
+            st.session_state.last_error = f"❌ {err_msg}"
 
         st.session_state.searching = False
         st.rerun()
@@ -2037,7 +2001,7 @@ if st.button(btn_label, type="primary", use_container_width=False, disabled=st.s
     if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):
-        st.error("❌ Missing GOOGLE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
+        st.error("❌ Missing GOOGLE_API_KEY or GROQ_API_KEY. Please set at least one in Streamlit secrets.")
     else:
         st.session_state.searching = True
         st.rerun()

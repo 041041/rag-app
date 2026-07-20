@@ -7,7 +7,7 @@ pypdf
 python-docx
 docx2txt
 pandas
-cryptography>=3.1
+cryptography==41.0.7
 numpy
 sentence-transformers
 langchain-huggingface

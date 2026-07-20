@@ -40,6 +40,58 @@ try:
 except Exception as e:
     logger.warning(f"Failed to monkey-patch google.genai BaseApiClient: {e}")
 
+def clean_llm_response(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    
+    import re
+    
+    raw_len = len(text)
+    
+    # Check if there is a <think> tag
+    think_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL)
+    
+    if think_match:
+        think_content = think_match.group(1).strip()
+        # Find everything after </think>
+        parts = text.split("</think>")
+        after_think = parts[1].strip() if len(parts) > 1 else ""
+        
+        # Case 1: Text after </think> exists and is not just whitespace
+        if after_think:
+            final_text = after_think
+        else:
+            # Case 2: Extract final answer from Draft/Answer/Output section inside the think block
+            draft_match = re.search(r"(?:Draft|Answer|Output|Final Answer|Response):\s*(.*)", think_content, flags=re.DOTALL | re.IGNORECASE)
+            if draft_match:
+                final_text = draft_match.group(1).strip()
+            else:
+                final_text = think_content
+        
+        # Clean reasoning headers
+        headers_to_remove = [
+            r"Analyze\s+User\s+Input",
+            r"Final\s+Review",
+            r"Self-Correction",
+            r"Output\s+Generation",
+            r"Reasoning\s+Analysis",
+            r"Reasoning:"
+        ]
+        for header in headers_to_remove:
+            final_text = re.sub(rf"(?:^|\n)#*\s*{header}[^\n]*", "", final_text, flags=re.IGNORECASE)
+            
+        final_text = final_text.strip()
+    else:
+        final_text = text.strip()
+        
+    cleaned_len = len(final_text)
+    
+    logger.info(f"Before cleaning: {raw_len} chars")
+    logger.info(f"After cleaning: {cleaned_len} chars")
+    logger.info(f"Final answer preview: {final_text[:200]}...")
+    
+    return final_text
+
 # Try to import providers safely
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -346,6 +398,5 @@ class ClinicalRAGLLM:
     def invoke(self, prompt: str) -> AIMessage:
         response = self.manager.invoke(prompt)
         if response is not None and hasattr(response, "content") and response.content:
-            import re
-            response.content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+            response.content = clean_llm_response(response.content)
         return response

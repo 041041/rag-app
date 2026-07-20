@@ -377,7 +377,8 @@ def _call_chain_safe(qa_chain, query: str):
         # 1. Clean thinking tags and introductory context phrases
         result_text = res.get("result", "")
         if isinstance(result_text, str):
-            result_text = re.sub(r"<think>.*?</think>", "", result_text, flags=re.DOTALL).strip()
+            from rag.llm import clean_llm_response
+            result_text = clean_llm_response(result_text)
             
             # Remove common introductory patterns
             phrases = [

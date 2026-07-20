@@ -1376,7 +1376,7 @@ st.markdown("""
         color: #f0f3f9;
     }
     .stApp textarea, .stApp input, .stApp select {
-        color: #0f172a !important;
+        color: #f8fafc !important;
     }
     h1 {
         background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);

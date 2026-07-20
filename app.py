@@ -40,6 +40,15 @@ class TorchvisionMockFinder:
 
 sys.meta_path.insert(0, TorchvisionMockFinder())
 
+# Diagnostic check for sentence-transformers import
+import logging
+logger = logging.getLogger("RAGApp.Diagnostic")
+try:
+    import sentence_transformers
+    logger.info("👉 Diagnostic: sentence_transformers imported successfully in app.py!")
+except Exception as e:
+    logger.error("❌ Diagnostic: sentence_transformers import failed in app.py!", exc_info=True)
+
 # Standardize on GOOGLE_API_KEY only: delete GEMINI_API_KEY if present in environment
 if "GEMINI_API_KEY" in os.environ:
     del os.environ["GEMINI_API_KEY"]

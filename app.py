@@ -3,18 +3,30 @@ import os
 import sys
 
 # Prevent torchvision import errors from optional Hugging Face transformers vision models
-from unittest.mock import MagicMock
-if "torchvision" not in sys.modules:
-    import importlib.machinery
-    torchvision_mock = MagicMock()
-    torchvision_mock.__spec__ = importlib.machinery.ModuleSpec(name="torchvision", loader=None)
-    
-    torchvision_io_mock = MagicMock()
-    torchvision_io_mock.__spec__ = importlib.machinery.ModuleSpec(name="torchvision.io", loader=None)
-    
-    torchvision_mock.io = torchvision_io_mock
-    sys.modules["torchvision"] = torchvision_mock
-    sys.modules["torchvision.io"] = torchvision_io_mock
+# by registering a custom meta-path finder that dynamically resolves nested submodules.
+import types
+import importlib.machinery
+
+class DummyModuleLoader:
+    def create_module(self, spec):
+        mod = types.ModuleType(spec.name)
+        mod.__path__ = []
+        mod.__file__ = __file__
+        return mod
+    def exec_module(self, module):
+        pass
+
+class TorchvisionMockFinder:
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "torchvision" or fullname.startswith("torchvision."):
+            return importlib.machinery.ModuleSpec(
+                name=fullname,
+                loader=DummyModuleLoader(),
+                is_package=True
+            )
+        return None
+
+sys.meta_path.insert(0, TorchvisionMockFinder())
 
 # Standardize on GOOGLE_API_KEY only: delete GEMINI_API_KEY if present in environment
 if "GEMINI_API_KEY" in os.environ:

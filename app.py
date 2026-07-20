@@ -374,7 +374,11 @@ def create_qa_from_retriever(retriever):
     else:
         if ChatGoogleGenerativeAI is None:
             raise RuntimeError("ChatGoogleGenerativeAI (langchain-google-genai) not available; install it.")
-        llm = ChatGoogleGenerativeAI(model=settings.LLM_MODEL, temperature=0.2, max_output_tokens=1024)
+        llm = ChatGoogleGenerativeAI(
+            model=settings.LLM_MODEL,
+            temperature=0.2,
+            convert_system_message_to_human=True,  # Required for gemini-2.0-flash
+        )
         logger.info(f"Initialized Gemini LLM with model: {settings.LLM_MODEL}")
         
     try:
@@ -507,20 +511,13 @@ def query_with_features(qa_chain, query: str):
             last_error = e
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                st.warning(f"⚠️ Attempt {attempt + 1} failed. Retrying in {wait_time}s...")
+                logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
             else:
                 elapsed = time.time() - start_time
                 metrics.log_query(query, elapsed, error=True)
-                err_str = str(e)
-                debug_hint = ""
-                try:
-                    if "last_raw_type" in err_str or "last_raw_preview" in err_str:
-                        debug_hint = "\n\nDebug info from chain:\n" + err_str
-                except Exception:
-                    debug_hint = f"\n\nException repr: {repr(e)}"
-                raise RuntimeError(f"All retries failed: {err_str}{debug_hint}")
+                raise RuntimeError(f"All retries failed: {last_error}")
 
     return None, False, time.time() - start_time
 
@@ -1903,49 +1900,72 @@ if "last_error" not in st.session_state:
 if st.session_state.searching:
     st.session_state.last_error = None
     if st.session_state.vector_store.index.ntotal == 0:
-        st.session_state.last_error = "❌ Index is empty. Please upload documents in the sidebar first."
+        st.session_state.last_error = "❌ Index is empty. Please upload documents first."
         st.session_state.searching = False
         st.rerun()
     else:
+        # ── Step-by-step progress display ────────────────────────────────
+        _prog_placeholder = st.empty()
+        def _show_step(icon, msg, sub=""):
+            _prog_placeholder.markdown(
+                f"""
+                <div style='background:rgba(30,41,59,0.6);border:1px solid rgba(99,179,237,0.25);border-radius:10px;
+                            padding:18px 22px;margin:8px 0;'>
+                    <div style='font-size:1.05em;font-weight:600;color:#e2e8f0;'>{icon} {msg}</div>
+                    {'<div style="font-size:0.85em;color:#94a3b8;margin-top:4px;">'+sub+'</div>' if sub else ''}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
         sel_docs = list(st.session_state.selected_docs) if st.session_state.get("selected_docs") else None
+        scope_label = f"{len(sel_docs)} selected document(s)" if sel_docs else "all documents"
+
+        _show_step("🔍", "Searching knowledge base...", f"Scope: {scope_label}")
         retriever = VectorStoreRetrieverAdapter(
             st.session_state.vector_store,
             k=settings.RETRIEVER_K,
             filter_sources=sel_docs
         )
+
+        _show_step("⚙️", "Initialising AI model...", f"Model: {settings.LLM_MODEL}")
         try:
             qa = create_qa_from_retriever(retriever)
         except Exception as e:
-            st.session_state.last_error = f"❌ QA chain initialization failed: {e}"
+            _prog_placeholder.empty()
+            st.session_state.last_error = f"❌ Could not initialise AI model: {e}"
             st.session_state.searching = False
             st.rerun()
-            
+
         try:
-            with st.spinner("🧠 Generating Answer..."):
-                t_search_start = time.time()
-                search_q = q_text
-                if sel_docs:
-                    search_q = f"In documents {sel_docs}: {q_text}"
-                res_tuple = query_with_features(qa, search_q)
-                
-                if res_tuple:
-                    result, was_cached, elapsed = res_tuple
-                    if result is not None:
-                        st.session_state.search_executed = True
-                        st.session_state.last_result = result
-                        st.session_state.last_was_cached = was_cached
-                        st.session_state.last_elapsed = elapsed
-                        st.session_state.last_error = None
-                    else:
-                        st.session_state.search_executed = False
-                        st.session_state.last_error = "All API attempts failed. Please verify your Gemini or Groq API keys."
+            search_q = q_text
+            if sel_docs:
+                search_q = f"In documents {sel_docs}: {q_text}"
+
+            _show_step("🧠", "Generating answer...", "This usually takes 3–10 seconds")
+            res_tuple = query_with_features(qa, search_q)
+            _prog_placeholder.empty()
+
+            if res_tuple:
+                result, was_cached, elapsed = res_tuple
+                if result is not None:
+                    st.session_state.search_executed = True
+                    st.session_state.last_result = result
+                    st.session_state.last_was_cached = was_cached
+                    st.session_state.last_elapsed = elapsed
+                    st.session_state.last_error = None
                 else:
                     st.session_state.search_executed = False
-                    st.session_state.last_error = "All API attempts failed. No response generated."
+                    st.session_state.last_error = "No response returned. Please verify your API key."
+            else:
+                st.session_state.search_executed = False
+                st.session_state.last_error = "No response returned. Please verify your API key."
         except Exception as e:
+            _prog_placeholder.empty()
             st.session_state.search_executed = False
-            st.session_state.last_error = f"Error during generation: {e}"
-            
+            # Show the full real error so we can debug it
+            st.session_state.last_error = f"Error: {e}"
+
         st.session_state.searching = False
         st.rerun()
 

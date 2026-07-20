@@ -333,7 +333,15 @@ class SimpleQAWrapper:
 # LLM prompt / QA builder
 # -------------------------
 PROMPT_TEMPLATE_STR = (
-    "You are an expert assistant for clinical trial data standards. Be concise and use bullet points when helpful.\n\n"
+    "You are an expert assistant for clinical trial data standards. Respond to the user's question using the following format:\n\n"
+    "1. Short definition: A brief, 1-2 sentence definition.\n"
+    "2. Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs.\n"
+    "3. Sources: List of source document names or page references when available.\n\n"
+    "Formatting rules:\n"
+    "- Each bullet point must be on its own line.\n"
+    "- Do not combine bullets into paragraphs.\n"
+    "- Never mention the phrase 'provided context' or 'provided text' in your answer.\n"
+    "- Focus only on standard-compliant answers.\n\n"
     "Question: {question}\nContext:\n{context}\n\nAnswer:"
 )
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)

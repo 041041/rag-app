@@ -439,16 +439,20 @@ def _call_chain_safe(qa_chain, query: str):
         
         logger.info(f"--- CITATION SOURCE VALIDATION LOG ---")
         logger.info(f"Question: '{query}'")
+        logger.info(f"Before validation:\n{type(res)}")
         logger.info("Retrieved sources:")
         for s in retrieved_list:
             logger.info(f"  - {s}")
+        logger.info(f"After validation:\n{type(res)}")
         logger.info("After validation:")
         for s in validation_list:
             logger.info(f"  - {s}")
         logger.info("Displayed sources:")
         for s in displayed_list:
             logger.info(f"  - {s}")
+        logger.info(f"Final returned object:\n{res.keys()}")
         logger.info(f"--------------------------------------")
+    return res
 
 def _call_chain_safe_raw(qa_chain, query: str):
     """

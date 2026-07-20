@@ -314,7 +314,16 @@ class SimpleQAWrapper:
 
     def _build_input(self, query: str):
         docs = self.retriever.get_relevant_documents(query)
-        context = "\n\n".join([d.page_content for d in docs])
+        context_parts = []
+        for i, d in enumerate(docs, 1):
+            source = d.metadata.get("source", "Unknown")
+            page = d.metadata.get("page", 0)
+            page_num = page + 1 if isinstance(page, int) else page
+            context_parts.append(
+                f"[Document {i}]: Source: {source}, Page: {page_num}\n"
+                f"Content:\n{d.page_content}"
+            )
+        context = "\n\n".join(context_parts)
         if hasattr(self.prompt, "template"):
             prompt_text = self.prompt.template.format(question=query, context=context)
         else:
@@ -334,14 +343,14 @@ class SimpleQAWrapper:
 # -------------------------
 PROMPT_TEMPLATE_STR = (
     "You are an expert assistant for clinical trial data standards. Respond to the user's question using the following format:\n\n"
-    "1. Short definition: A brief, 1-2 sentence definition.\n"
-    "2. Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs.\n"
-    "3. Sources: List of source document names or page references when available.\n\n"
+    "1. Short definition: A brief, 1-2 sentence definition. Include an inline citation at the end of the definition in the format (Source: <filename>, Page: <page_num>).\n"
+    "2. Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs. Include inline citations at the end of bullet points in the format (Source: <filename>, Page: <page_num>).\n"
+    "3. Sources: List of source document names and page references actually cited in the sections above.\n\n"
     "Formatting rules:\n"
-    "- Each bullet point must be on its own line.\n"
-    "- Do not combine bullets into paragraphs.\n"
-    "- Never mention the phrase 'provided context' or 'provided text' in your answer.\n"
-    "- Focus only on standard-compliant answers.\n\n"
+    "- Start the response directly with the definition. Do not use introductory phrases like 'Based on the provided context' or 'According to the context'.\n"
+    "- Each bullet point must be on its own line. Do not combine bullets into paragraphs.\n"
+    "- Use only real metadata from the context documents below. Never invent page numbers.\n"
+    "- Never mention the phrase 'provided context' or 'provided text' in your answer.\n\n"
     "Question: {question}\nContext:\n{context}\n\nAnswer:"
 )
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)
@@ -360,9 +369,64 @@ def create_qa_from_retriever(retriever):
 # -------------------------
 def _call_chain_safe(qa_chain, query: str):
     res = _call_chain_safe_raw(qa_chain, query)
-    if res and isinstance(res, dict) and "result" in res and isinstance(res["result"], str):
+    if res and isinstance(res, dict):
         import re
-        res["result"] = re.sub(r"<think>.*?</think>", "", res["result"], flags=re.DOTALL).strip()
+        
+        # 1. Clean thinking tags and introductory context phrases
+        result_text = res.get("result", "")
+        if isinstance(result_text, str):
+            result_text = re.sub(r"<think>.*?</think>", "", result_text, flags=re.DOTALL).strip()
+            
+            # Remove common introductory patterns
+            phrases = [
+                r"^\s*based\s+on\s+the\s+provided\s+context,?\s*",
+                r"^\s*based\s+on\s+clinical\s+trial\s+standards\s+and\s+the\s+provided\s+context,?\s*",
+                r"^\s*according\s+to\s+the\s+context,?\s*",
+                r"^\s*based\s+on\s+the\s+context\s+provided,?\s*",
+                r"^\s*according\s+to\s+the\s+provided\s+context,?\s*"
+            ]
+            for pattern in phrases:
+                result_text = re.sub(pattern, "", result_text, flags=re.IGNORECASE)
+            
+            # Capitalize first letter if it starts lowercase after stripping
+            if result_text:
+                result_text = result_text[0].upper() + result_text[1:]
+                
+            res["result"] = result_text
+
+        # 2. Filter source_documents to only those actually cited in the result text
+        source_docs = res.get("source_documents", [])
+        if source_docs and isinstance(result_text, str):
+            citations = re.findall(
+                r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)",
+                result_text,
+                flags=re.IGNORECASE
+            )
+            if citations:
+                def normalize_source_name(name: str) -> str:
+                    name = re.sub(r"\.pdf$", "", name, flags=re.IGNORECASE)
+                    return "".join(c for c in name.lower() if c.isalnum())
+                
+                cited_pairs = set()
+                for c_src, c_pg in citations:
+                    try:
+                        cited_pairs.add((normalize_source_name(c_src), int(c_pg)))
+                    except ValueError:
+                        pass
+                
+                cited_docs = []
+                for d in source_docs:
+                    doc_src = d.metadata.get("source", "")
+                    doc_pg = d.metadata.get("page")
+                    if doc_pg is not None:
+                        doc_pg_1 = doc_pg + 1
+                        norm_doc_src = normalize_source_name(doc_src)
+                        if (norm_doc_src, doc_pg_1) in cited_pairs:
+                            cited_docs.append(d)
+                
+                # Only restrict if we actually matched some of them to avoid blanking
+                if cited_docs:
+                    res["source_documents"] = cited_docs
     return res
 
 def _call_chain_safe_raw(qa_chain, query: str):

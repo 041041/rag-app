@@ -2250,7 +2250,16 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
     # ── 1. AI Answer ──────────────────────────────────────────────────────
     with st.container(border=True):
         st.subheader("✨ AI Answer")
-        st.markdown(result.get("result", "").strip() if result.get("result") else "")
+        from rag.llm import clean_llm_response
+        raw_ans = result.get("result", "").strip() if result.get("result") else ""
+        cleaned_ans = clean_llm_response(raw_ans)
+        
+        # Add final UI debug logs
+        logger.info("Before UI rendering:")
+        logger.info(f"Final answer length: {len(cleaned_ans)}")
+        logger.info(f"Final answer preview: {cleaned_ans[:200]}...")
+        
+        st.markdown(cleaned_ans)
 
         # ── 2. Sources ────────────────────────────────────────────────────
         if sources_group:

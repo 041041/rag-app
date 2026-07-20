@@ -67,25 +67,28 @@ def clean_llm_response(text: str) -> str:
                 final_text = draft_match.group(1).strip()
             else:
                 final_text = think_content
-        
-        # 3. Remove these sections:
-        sections_to_remove = [
-            r"Analyze\s+User\s+Input",
-            r"Identify\s+Critical\s+Issue",
-            r"Synthesize\s+Definition",
-            r"Final\s+Review",
-            r"Self-Correction",
-            r"Output\s+Generation",
-            r"Reasoning\s+Analysis",
-            r"Reasoning:"
-        ]
-        for section in sections_to_remove:
-            final_text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
-            
-        final_text = final_text.strip()
     else:
-        final_text = text.strip()
+        # Remove any stray tags
+        final_text = text.replace("<think>", "").replace("</think>", "").strip()
         
+    # 3. Remove these sections (Run unconditionally for idempotency):
+    sections_to_remove = [
+        r"Analyze\s+User\s+Input",
+        r"Identify\s+Critical\s+Issue",
+        r"Synthesize\s+Definition",
+        r"Format\s+Requirements",
+        r"Scan\s+Context",
+        r"Context\s+analysis",
+        r"Final\s+Review",
+        r"Self-Correction",
+        r"Output\s+Generation",
+        r"Reasoning\s+Analysis",
+        r"Reasoning:"
+    ]
+    for section in sections_to_remove:
+        final_text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
+        
+    final_text = final_text.strip()
     cleaned_len = len(final_text)
     
     logger.info(f"Before cleaning: {raw_len}")

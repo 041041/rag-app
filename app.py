@@ -372,6 +372,8 @@ def _call_chain_safe(qa_chain, query: str):
     if res and isinstance(res, dict):
         import re
         
+        raw_source_docs = list(res.get("source_documents", []))
+        
         # 1. Clean thinking tags and introductory context phrases
         result_text = res.get("result", "")
         if isinstance(result_text, str):
@@ -393,6 +395,8 @@ def _call_chain_safe(qa_chain, query: str):
                 result_text = result_text[0].upper() + result_text[1:]
                 
             res["result"] = result_text
+
+        after_validation_docs = list(res.get("source_documents", []))
 
         # 2. Filter source_documents to only those actually cited in the result text
         source_docs = res.get("source_documents", [])
@@ -427,7 +431,24 @@ def _call_chain_safe(qa_chain, query: str):
                 # Only restrict if we actually matched some of them to avoid blanking
                 if cited_docs:
                     res["source_documents"] = cited_docs
-    return res
+                    
+        # 3. Log debug information (Task 5 logs)
+        retrieved_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in raw_source_docs]
+        validation_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in after_validation_docs]
+        displayed_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in res.get("source_documents", [])]
+        
+        logger.info(f"--- CITATION SOURCE VALIDATION LOG ---")
+        logger.info(f"Question: '{query}'")
+        logger.info("Retrieved sources:")
+        for s in retrieved_list:
+            logger.info(f"  - {s}")
+        logger.info("After validation:")
+        for s in validation_list:
+            logger.info(f"  - {s}")
+        logger.info("Displayed sources:")
+        for s in displayed_list:
+            logger.info(f"  - {s}")
+        logger.info(f"--------------------------------------")
 
 def _call_chain_safe_raw(qa_chain, query: str):
     """

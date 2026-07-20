@@ -238,19 +238,41 @@ class FAISSVectorStore(VectorStore):
                 
                 base_score = float(scores[0][i])
                 
-                # Task 1: Filter by similarity score threshold
-                if base_score < settings.MIN_SIMILARITY_SCORE:
-                    continue
-                
-                # Task 3: Document-aware boosting
+                # Task 3: Domain-aware boosting and penalties
                 source_lower = str(doc.metadata.get("source", "")).lower()
-                boost = 0.0
-                if "sdtm" in query_lower and ("sdtmig" in source_lower or "sdtm" in source_lower):
-                    boost = 0.15
-                elif "adam" in query_lower and ("adamig" in source_lower or "adam" in source_lower):
-                    boost = 0.15
-                    
-                boosted_score = base_score + boost
+                boost_or_penalty = 0.0
+                
+                adam_kws = {"adam", "avisit", "aval", "adsl", "shift"}
+                sdtm_kws = {"sdtm", "domains", "dm", "ae", "lb"}
+                
+                has_adam_kw = any(kw in query_lower for kw in adam_kws)
+                has_sdtm_kw = any(kw in query_lower for kw in sdtm_kws)
+                
+                is_adam_doc = "adam" in source_lower or "adamig" in source_lower
+                is_sdtm_doc = "sdtm" in source_lower or "sdtmig" in source_lower
+                is_standard_doc = is_adam_doc or is_sdtm_doc
+                
+                if has_adam_kw:
+                    if is_adam_doc:
+                        boost_or_penalty = 0.30
+                    elif not is_standard_doc:
+                        boost_or_penalty = -0.40
+                elif has_sdtm_kw:
+                    if is_sdtm_doc:
+                        boost_or_penalty = 0.30
+                    elif not is_standard_doc:
+                        boost_or_penalty = -0.40
+                else:
+                    if "sdtm" in query_lower and is_sdtm_doc:
+                        boost_or_penalty = 0.15
+                    elif "adam" in query_lower and is_adam_doc:
+                        boost_or_penalty = 0.15
+                        
+                boosted_score = base_score + boost_or_penalty
+                
+                # Task 1: Filter by similarity score threshold
+                if boosted_score < settings.MIN_SIMILARITY_SCORE:
+                    continue
                 
                 # Task 4: Semantic relevance reranking (keyword density overlap)
                 overlap = compute_keyword_overlap(query, doc.page_content)

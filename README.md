@@ -1,6 +1,6 @@
 # Clinical Trial RAG Application with Cloudflare R2 & FAISS
 
-A Streamlit RAG (Retrieval-Augmented Generation) application configured to ingest clinical trial documents, index them using HuggingFace embeddings (`all-MiniLM-L6-v2`) and FAISS, and query them with Google Gemini (`gemini-2.5-flash`). Persistent storage is managed through Cloudflare R2 with automatic backups and multi-user optimistic concurrency lock protection.
+A Streamlit RAG (Retrieval-Augmented Generation) application configured to ingest clinical trial documents, index them using HuggingFace embeddings (`all-MiniLM-L6-v2`) and FAISS, and query them with **Google Gemini** (`gemini-2.0-flash`) or **Groq** (`llama-3.3-70b-versatile`). Persistent storage is managed through Cloudflare R2 with automatic backups and multi-user optimistic concurrency lock protection.
 
 ## Architecture Flow
 
@@ -23,7 +23,8 @@ Local Cache (caches indexes locally at runtime)
 FAISS IndexIDMap (performs fast vector similarity searches)
       │
       ▼
-Google Gemini (LLM response generation)
+Google Gemini `gemini-2.0-flash`  (primary LLM — free tier)
+   OR Groq `llama-3.3-70b-versatile`  (fallback LLM — free tier)
 ```
 
 ## Features
@@ -40,7 +41,7 @@ Google Gemini (LLM response generation)
 
 * Python 3.9 or higher
 * A Cloudflare R2 bucket
-* A Google Gemini API key
+* A Google Gemini API key (free at [aistudio.google.com](https://aistudio.google.com)) **or** a Groq API key (free at [console.groq.com](https://console.groq.com))
 
 ## Getting Started
 
@@ -62,7 +63,10 @@ R2_ACCOUNT_ID=your_cloudflare_account_id
 R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 R2_BUCKET_NAME=your_r2_bucket_name
-GOOGLE_API_KEY=your_google_gemini_api_key
+GOOGLE_API_KEY=your_google_gemini_api_key   # Uses gemini-2.0-flash (free)
+# GROQ_API_KEY=your_groq_api_key            # Optional fallback: llama-3.3-70b-versatile
+# LLM_MODEL=gemini-2.0-flash               # Override Gemini model
+# GROQ_MODEL=llama-3.3-70b-versatile       # Override Groq model
 ```
 
 ### 3. Install Dependencies

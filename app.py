@@ -2,6 +2,11 @@
 import os
 import sys
 
+# Clear any stale torchvision entries from sys.modules to prevent find_spec crashes on hot-reloads
+for k in list(sys.modules.keys()):
+    if k == "torchvision" or k.startswith("torchvision."):
+        del sys.modules[k]
+
 # Prevent torchvision import errors from optional Hugging Face transformers vision models
 # by registering a custom meta-path finder that dynamically resolves nested submodules.
 import types

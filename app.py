@@ -1375,8 +1375,14 @@ st.markdown("""
     .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp p, .stApp label, .stMarkdown {
         color: #f0f3f9;
     }
-    .stApp textarea, .stApp input, .stApp select {
+    .stApp textarea, .stApp input, .stApp select,
+    textarea, input, select,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stTextInput"] input,
+    .stTextArea textarea,
+    .stTextInput input {
         color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
     }
     h1 {
         background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);

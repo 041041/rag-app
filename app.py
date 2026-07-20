@@ -2,19 +2,26 @@
 import os
 import sys
 
-# Clear any stale torchvision entries from sys.modules to prevent find_spec crashes on hot-reloads
-for k in list(sys.modules.keys()):
-    if k == "torchvision" or k.startswith("torchvision."):
-        del sys.modules[k]
-
-# Prevent torchvision import errors from optional Hugging Face transformers vision models
-# by registering a custom meta-path finder that dynamically resolves nested submodules.
+# Ensure torchvision and its common submodules are pre-populated with valid ModuleSpec objects
+# to prevent importlib.util.find_spec from throwing a ValueError during parallel hot-reloads.
 import types
 import importlib.machinery
 
+for name in ["torchvision", "torchvision.io", "torchvision.transforms", "torchvision.transforms.v2"]:
+    if name not in sys.modules or not hasattr(sys.modules[name], "__spec__") or sys.modules[name].__spec__ is None:
+        spec = importlib.machinery.ModuleSpec(name, None, is_package=True)
+        mod = types.ModuleType(name)
+        mod.__spec__ = spec
+        mod.__path__ = []
+        mod.__file__ = __file__
+        sys.modules[name] = mod
+
+# Prevent torchvision import errors from optional Hugging Face transformers vision models
+# by registering a custom meta-path finder that dynamically resolves nested submodules.
 class DummyModuleLoader:
     def create_module(self, spec):
         mod = types.ModuleType(spec.name)
+        mod.__spec__ = spec
         mod.__path__ = []
         mod.__file__ = __file__
         return mod

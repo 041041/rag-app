@@ -368,7 +368,7 @@ def create_qa_from_retriever(retriever):
     if not has_gemini and has_groq:
         if ChatGroq is None:
             raise RuntimeError("ChatGroq (langchain-groq) is not available; install it.")
-        model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-specdec")
+        model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
         llm = ChatGroq(model_name=model_name, temperature=0.2)
         logger.info(f"Initialized Groq LLM with model: {model_name}")
     else:

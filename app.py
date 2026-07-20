@@ -1055,7 +1055,7 @@ def sync_index_if_version_changed():
     import time
     curr_time = time.time()
     last_check = st.session_state.get("last_r2_sync_check_time", 0.0)
-    if curr_time - last_check < 60.0:
+    if curr_time - last_check < 300.0:  # Check at most every 5 minutes
         return
     st.session_state.last_r2_sync_check_time = curr_time
         
@@ -1289,58 +1289,6 @@ def rebuild_empty_index_workflow():
             r2_storage.release_lock(owner_id)
 
 # Startup initialization will run lazily in the main UI flow below
-
-def sync_index_if_version_changed():
-    """
-    Checks if the remote R2 index version is newer than the local loaded version.
-    If newer, downloads and reloads the index.
-    """
-    if "health_status" not in st.session_state or not st.session_state.health_status.get("r2_connected"):
-        return
-        
-    print("🔄 Checking if remote R2 index version changed...", flush=True)
-    try:
-        temp_meta_path = settings.INDEXES_DIR / "temp_document_metadata.json"
-        # Download document_metadata.json from R2 to get the remote version
-        download_success = r2_storage.download_file(
-            f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}",
-            temp_meta_path
-        )
-        if not download_success:
-            print("🔄 Remote metadata not found on R2.", flush=True)
-            return
-            
-        import json
-        if temp_meta_path.exists():
-            with open(temp_meta_path, 'r', encoding='utf-8') as f:
-                remote_meta = json.load(f)
-                
-            remote_version = remote_meta.get("version", 0)
-            local_version = st.session_state.health_status["version"]
-            
-            if remote_version > local_version:
-                print(f"🔄 Remote index version (v{remote_version}) is newer than local version (v{local_version}). Syncing...", flush=True)
-                with st.spinner(f"🔄 Syncing newer R2 index version (v{remote_version})..."):
-                    r2_storage.download_file(
-                        f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}",
-                        settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
-                    )
-                    r2_storage.download_file(
-                        f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}",
-                        settings.INDEXES_DIR / settings.METADATA_PKL_FILE
-                    )
-                    import shutil
-                    shutil.copy2(temp_meta_path, settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE)
-                    
-                    st.session_state.vector_store.load(str(settings.INDEXES_DIR))
-                    st.session_state.health_status["version"] = remote_version
-                    st.session_state.health_status["last_updated"] = remote_meta.get("last_updated", "Just now")
-                    st.session_state.health_status["index_loaded"] = True
-                    print(f"✅ Synced index successfully to v{remote_version}", flush=True)
-            else:
-                print(f"🔄 Index is up to date (local: v{local_version}, remote: v{remote_version})", flush=True)
-    except Exception as e:
-        print(f"⚠️ Error checking R2 version: {e}", flush=True)
 
 
 

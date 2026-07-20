@@ -351,6 +351,13 @@ def create_qa_from_retriever(retriever):
 # Chain-safe invoker
 # -------------------------
 def _call_chain_safe(qa_chain, query: str):
+    res = _call_chain_safe_raw(qa_chain, query)
+    if res and isinstance(res, dict) and "result" in res and isinstance(res["result"], str):
+        import re
+        res["result"] = re.sub(r"<think>.*?</think>", "", res["result"], flags=re.DOTALL).strip()
+    return res
+
+def _call_chain_safe_raw(qa_chain, query: str):
     """
     Try common invocation methods and normalize output:
     returns {"result": str, "source_documents": [Document, ...], "raw": raw}

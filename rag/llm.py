@@ -344,4 +344,8 @@ class ClinicalRAGLLM:
         )
 
     def invoke(self, prompt: str) -> AIMessage:
-        return self.manager.invoke(prompt)
+        response = self.manager.invoke(prompt)
+        if response is not None and hasattr(response, "content") and response.content:
+            import re
+            response.content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+        return response

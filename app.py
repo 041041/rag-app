@@ -485,14 +485,24 @@ def initialize_rag():
     
     # 1. Initialize FAISSVectorStore (verifies FAISS loaded and embedding model loaded)
     print("🚀 [STARTUP LOG] [STEP 2] Creating FAISSVectorStore...", flush=True)
+    print("Loading embedding model...", flush=True)
+    print("Embedding provider: sentence-transformers", flush=True)
+    print("Model: BAAI/bge-small-en-v1.5", flush=True)
+    
     try:
         store = FAISSVectorStore()
+        dimension = getattr(store, "dimension", 384)
+        index_size = store.index.ntotal if (getattr(store, "index", None) is not None) else 0
+        
+        print(f"Embedding dimension: {dimension}", flush=True)
+        print("FAISS loaded successfully", flush=True)
+        print(f"Index size: {index_size} documents", flush=True)
+        print("Application ready", flush=True)
         embeddings_loaded = True
         print("🚀 [STARTUP LOG] [STEP 3] FAISSVectorStore created successfully.", flush=True)
     except Exception as e:
         print(f"🚀 [STARTUP LOG] [STEP 3 ERROR] FAISSVectorStore creation failed: {e}", flush=True)
-        store = None
-        embeddings_loaded = False
+        raise RuntimeError("Embedding model initialization failed. Application cannot start.") from e
         
     health_status = {
         "r2_connected": False,
@@ -504,10 +514,6 @@ def initialize_rag():
         "gemini_reachable": None,
         "groq_reachable": None
     }
-    
-    if store is None:
-        health_status["message"] = "Critical: Failed to load FAISS or embeddings."
-        return store, health_status
 
     # 2. Verify R2 connection
     print("🚀 [STARTUP LOG] [STEP 4] Verifying Cloudflare R2 connection...", flush=True)
@@ -1641,10 +1647,19 @@ if "vector_store" in st.session_state:
 # Startup check trigger at top-level to prevent AttributeError
 if "vector_store" not in st.session_state:
     with st.spinner("🔄 Loading RAG index and connecting to Cloudflare R2..."):
-        store, health_status = initialize_rag()
-        st.session_state.vector_store = store
-        st.session_state.health_status = health_status
+        try:
+            store, health_status = initialize_rag()
+            if store is None:
+                raise RuntimeError("Embedding model initialization failed. Application cannot start.")
+            st.session_state.vector_store = store
+            st.session_state.health_status = health_status
+        except Exception as e:
+            st.error(f"❌ Embedding model initialization failed. Application cannot start.\n\nError: {e}")
+            st.stop()
 else:
+    if st.session_state.vector_store is None:
+        st.error("❌ Embedding model initialization failed. Application cannot start.")
+        st.stop()
     sync_index_if_version_changed()
 
 # Initialize document manager state (Requirement 5)

@@ -332,6 +332,13 @@ class SimpleQAWrapper:
 
     def run(self, query: str):
         prompt_text, docs = self._build_input(query)
+        if not docs:
+            logger.info("Retrieved context is empty. Returning insufficient information fallback.")
+            return {
+                "result": "The uploaded documents do not provide sufficient information to answer this question.",
+                "source_documents": [],
+                "raw": None
+            }
         logger.info("Invoking ClinicalRAGLLM unified abstraction...")
         response = self.llm.invoke(prompt_text)
         result_text = response.content if hasattr(response, "content") else str(response)

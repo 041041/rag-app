@@ -57,28 +57,30 @@ def clean_llm_response(text: str) -> str:
         parts = text.split("</think>")
         after_think = parts[1].strip() if len(parts) > 1 else ""
         
-        # Case 1: Text after </think> exists and is not just whitespace
+        # 1. If content exists after </think>:
         if after_think:
             final_text = after_think
         else:
-            # Case 2: Extract final answer from Draft/Answer/Output section inside the think block
-            draft_match = re.search(r"(?:Draft|Answer|Output|Final Answer|Response):\s*(.*)", think_content, flags=re.DOTALL | re.IGNORECASE)
+            # 2. Search inside think block for Draft, Final Answer, Answer, Response:
+            draft_match = re.search(r"(?:Draft|Final Answer|Answer|Response):\s*(.*)", think_content, flags=re.DOTALL | re.IGNORECASE)
             if draft_match:
                 final_text = draft_match.group(1).strip()
             else:
                 final_text = think_content
         
-        # Clean reasoning headers
-        headers_to_remove = [
+        # 3. Remove these sections:
+        sections_to_remove = [
             r"Analyze\s+User\s+Input",
+            r"Identify\s+Critical\s+Issue",
+            r"Synthesize\s+Definition",
             r"Final\s+Review",
             r"Self-Correction",
             r"Output\s+Generation",
             r"Reasoning\s+Analysis",
             r"Reasoning:"
         ]
-        for header in headers_to_remove:
-            final_text = re.sub(rf"(?:^|\n)#*\s*{header}[^\n]*", "", final_text, flags=re.IGNORECASE)
+        for section in sections_to_remove:
+            final_text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
             
         final_text = final_text.strip()
     else:
@@ -86,9 +88,9 @@ def clean_llm_response(text: str) -> str:
         
     cleaned_len = len(final_text)
     
-    logger.info(f"Before cleaning: {raw_len} chars")
-    logger.info(f"After cleaning: {cleaned_len} chars")
-    logger.info(f"Final answer preview: {final_text[:200]}...")
+    logger.info(f"Before cleaning: {raw_len}")
+    logger.info(f"After cleaning: {cleaned_len}")
+    logger.info(f"Extracted answer preview: {final_text[:200]}...")
     
     return final_text
 

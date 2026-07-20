@@ -675,6 +675,57 @@ def initialize_rag():
                 health_status["groq_reachable"] = False
     else:
         health_status["groq_reachable"] = None
+
+    # 5. Startup Validation and Diagnostics
+    try:
+        print("\n🚀 [STARTUP LOG] [STEP 16] Running FAISS Index Startup Validation...", flush=True)
+        index_path = settings.INDEXES_DIR / settings.FAISS_INDEX_FILE
+        total_vectors = store.index.ntotal if (getattr(store, "index", None) is not None) else 0
+        metadata_records = len(store.docs) if (getattr(store, "docs", None) is not None) else 0
+        
+        # Load document_metadata.json to see if we expect documents
+        doc_meta = get_document_metadata()
+        expected_docs = list(doc_meta.get("documents", {}).keys())
+        num_expected_docs = len(expected_docs)
+        
+        # Diagnostics
+        print(f"FAISS index path: {index_path}", flush=True)
+        print(f"Total vectors: {total_vectors}", flush=True)
+        print(f"Metadata records: {metadata_records}", flush=True)
+        
+        # Print sample document names (top 3)
+        sample_docs = []
+        if getattr(store, "docs", None) is not None:
+            unique_sources = set()
+            for doc_id, doc in store.docs.items():
+                src = doc.metadata.get("source")
+                if src:
+                    unique_sources.add(src)
+            sample_docs = sorted(list(unique_sources))[:3]
+            
+        print("Sample document names:", flush=True)
+        for idx, name in enumerate(sample_docs, 1):
+            print(f"{idx}. {name}", flush=True)
+            
+        # Validation warning check
+        if num_expected_docs > 0 and total_vectors == 0:
+            print("⚠️ WARNING: Expected documents exist in metadata but FAISS index size is 0!", flush=True)
+            missing_parts = []
+            if not index_path.exists():
+                missing_parts.append("FAISS index file (.faiss)")
+            if not (settings.INDEXES_DIR / settings.METADATA_PKL_FILE).exists():
+                missing_parts.append("Metadata mapping file (.pkl)")
+            if not (settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE).exists():
+                missing_parts.append("Document metadata JSON")
+            if missing_parts:
+                print(f"  Missing files identified: {', '.join(missing_parts)}", flush=True)
+            else:
+                print("  All local index files exist on disk, but the loaded index contains 0 vectors. The index files may be corrupted or empty.", flush=True)
+        else:
+            print("✅ FAISS index startup validation passed successfully.", flush=True)
+        print("", flush=True)
+    except Exception as diag_err:
+        print(f"⚠️ Warning: Failed to run FAISS startup diagnostics: {diag_err}\n", flush=True)
             
     print("🚀 [STARTUP LOG] [STEP 11] initialize_rag() completed.", flush=True)
     return store, health_status

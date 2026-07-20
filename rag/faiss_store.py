@@ -187,43 +187,104 @@ class FAISSVectorStore(VectorStore):
     def search(self, query: str, k: int = 8, filter_sources: List[str] = None) -> List[Document]:
         """
         Performs inner product (cosine similarity) search on the normalized vectors.
-        Optionally filters results to a specific set of source files.
+        Optionally filters results to a specific set of source files, applies query expansion,
+        document-aware boosting, keyword-overlap reranking, and similarity thresholding.
         """
         if not self.docs or self.index.ntotal == 0:
             return []
             
+        import re
+        
+        def compute_keyword_overlap(q_str: str, text: str) -> float:
+            stopwords = {"what", "is", "the", "and", "of", "in", "to", "for", "with", "a", "an", "on", "at", "by", "from", "as", "about"}
+            query_words = set(re.findall(r'\b[a-zA-Z0-9_]{3,}\b', q_str.lower()))
+            query_words = query_words - stopwords
+            if not query_words:
+                return 0.0
+            text_lower = text.lower()
+            matches = sum(1 for word in query_words if word in text_lower)
+            return matches / len(query_words)
+
+        # Task 1 & 2: Query Expansion
+        expanded_query = query
+        query_lower = query.lower()
+        if "sdtm" in query_lower:
+            expanded_query += " Study Data Tabulation Model CDISC standard definition purpose domains structure"
+        if "adam" in query_lower:
+            expanded_query += " Analysis Data Model CDISC standard definition datasets ADSL"
+
         # Get query embedding
-        logger.info(f"Embedding search query: '{query[:50]}...'")
-        qvec = self.embeddings.embed_query(query)
+        logger.info(f"Embedding search query: '{query[:50]}...' (Expanded: '{expanded_query[:50]}...')")
+        qvec = self.embeddings.embed_query(expanded_query)
         qvec_np = np.array([qvec], dtype=np.float32)
         
         # Normalize query vector
         faiss.normalize_L2(qvec_np)
         
-        # Search index with a higher candidate count if filtering to guarantee enough results
-        fetch_k = min(k * 30 if filter_sources else k, self.index.ntotal)
+        # Fetch candidate pool (larger than k to allow reranking)
+        fetch_k = min(k * 5, self.index.ntotal)
         if fetch_k <= 0:
             return []
             
         scores, indices = self.index.search(qvec_np, fetch_k)
         
-        retrieved_docs = []
+        candidates = []
         for i, idx in enumerate(indices[0]):
             if idx != -1 and idx in self.docs:
                 doc = self.docs[idx]
                 # Apply hard document source filter
                 if filter_sources and doc.metadata.get("source") not in filter_sources:
                     continue
-                new_doc = Document(
-                    page_content=doc.page_content,
-                    metadata=doc.metadata.copy()
-                )
-                new_doc.metadata["score"] = float(scores[0][i])
-                new_doc.metadata["chunk_id"] = int(idx)
-                retrieved_docs.append(new_doc)
-                if len(retrieved_docs) >= k:
-                    break
+                
+                base_score = float(scores[0][i])
+                
+                # Task 1: Filter by similarity score threshold
+                if base_score < settings.MIN_SIMILARITY_SCORE:
+                    continue
+                
+                # Task 3: Document-aware boosting
+                source_lower = str(doc.metadata.get("source", "")).lower()
+                boost = 0.0
+                if "sdtm" in query_lower and ("sdtmig" in source_lower or "sdtm" in source_lower):
+                    boost = 0.15
+                elif "adam" in query_lower and ("adamig" in source_lower or "adam" in source_lower):
+                    boost = 0.15
                     
+                boosted_score = base_score + boost
+                
+                # Task 4: Semantic relevance reranking (keyword density overlap)
+                overlap = compute_keyword_overlap(query, doc.page_content)
+                final_score = boosted_score + 0.2 * overlap
+                
+                candidates.append((doc, idx, base_score, boosted_score, final_score))
+
+        # Sort candidates by final score descending
+        candidates.sort(key=lambda x: x[4], reverse=True)
+        
+        retrieved_docs = []
+        for doc, idx, base_score, boosted_score, final_score in candidates[:k]:
+            new_doc = Document(
+                page_content=doc.page_content,
+                metadata=doc.metadata.copy()
+            )
+            new_doc.metadata["score"] = base_score
+            new_doc.metadata["boosted_score"] = boosted_score
+            new_doc.metadata["final_score"] = final_score
+            new_doc.metadata["chunk_id"] = int(idx)
+            retrieved_docs.append(new_doc)
+
+        # Task 6: Add debug logs
+        logger.info(f"--- RAG RETRIEVAL DEBUG LOG ---")
+        logger.info(f"Question: '{query}'")
+        logger.info("Retrieved candidate chunks:")
+        for doc, idx, base_score, boosted_score, final_score in candidates:
+            logger.info(f"  - Document: {doc.metadata.get('source')} | Page: {doc.metadata.get('page')} | FAISS Score: {base_score:.4f} | Boosted: {boosted_score:.4f} | Final Score: {final_score:.4f}")
+            
+        logger.info("Reranked final chunks sent to LLM:")
+        for doc in retrieved_docs:
+            logger.info(f"  - Document: {doc.metadata.get('source')} | Page: {doc.metadata.get('page')} | Final Score: {doc.metadata.get('final_score'):.4f}")
+        logger.info(f"-------------------------------")
+
         return retrieved_docs
 
     def save(self, folder_path: str) -> None:

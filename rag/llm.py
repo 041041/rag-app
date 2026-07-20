@@ -264,15 +264,24 @@ class FallbackManager:
             model_name = provider.get_model_name()
             logger.info(f"🤖 Selected LLM Provider: {provider_name.capitalize()} | Model: {model_name}")
 
+            if provider_name == "groq":
+                logger.info("👉 [FALLBACK BRANCH REACHED] Fallback to Groq triggered.")
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     start_time = time.time()
+                    if provider_name == "groq":
+                        logger.info(f"👉 Calling Groq LLM (model: {model_name}) now...")
                     response = provider.invoke(prompt)
                     latency = time.time() - start_time
+                    if provider_name == "groq":
+                        logger.info("👉 Groq fallback returned response successfully.")
                     logger.info(f"✅ Completed | Latency: {latency:.2f} sec")
                     return response
                 except Exception as e:
+                    if provider_name == "groq":
+                        logger.error(f"❌ Groq fallback invocation failed: {e}")
                     err_msg = str(e)
                     
                     # Detect quota exhaustion (429)

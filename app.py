@@ -2270,9 +2270,10 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
     # ── 1. AI Answer ──────────────────────────────────────────────────────
     with st.container(border=True):
         st.subheader("✨ AI Answer")
-        from rag.llm import clean_llm_response
+        from rag.llm import clean_llm_response, ensure_clinical_rag_format
         raw_ans = result.get("result", "").strip() if result.get("result") else ""
         cleaned_ans = clean_llm_response(raw_ans)
+        cleaned_ans = ensure_clinical_rag_format(cleaned_ans, result.get("source_documents", []))
         
         # Add final UI debug logs
         logger.info("Before UI rendering:")

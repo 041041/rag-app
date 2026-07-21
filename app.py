@@ -759,12 +759,10 @@ def initialize_rag():
         try:
             print("🚀 [STARTUP LOG] [STEP 14] Verifying Groq model reachability...", flush=True)
             from langchain_groq import ChatGroq
-            groq_model = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"))
-            if "llama-3.3-70b" in groq_model or "versatile" in groq_model:
-                groq_model = "qwen/qwen3.6-27b"
+            groq_model = os.getenv("GROQ_PRIMARY_MODEL", "llama-3.3-70b-versatile")
             llm = ChatGroq(
                 model_name=groq_model,
-                temperature=0.2,
+                temperature=0.0,
                 groq_api_key=groq_key
             )
             llm.invoke([HumanMessage(content="Hello")])
@@ -773,13 +771,11 @@ def initialize_rag():
         except Exception as e:
             # Try secondary model as check fallback
             try:
-                groq_sec = os.getenv("GROQ_SECONDARY_MODEL", "openai/gpt-oss-20b")
-                if "llama-3.3-70b" in groq_sec or "versatile" in groq_sec:
-                    groq_sec = "openai/gpt-oss-20b"
+                groq_sec = os.getenv("GROQ_SECONDARY_MODEL", "llama-3.1-8b-instant")
                 print(f"🚀 [STARTUP LOG] Groq primary failed. Testing secondary model '{groq_sec}'...", flush=True)
                 llm = ChatGroq(
                     model_name=groq_sec,
-                    temperature=0.2,
+                    temperature=0.0,
                     groq_api_key=groq_key
                 )
                 llm.invoke([HumanMessage(content="Hello")])

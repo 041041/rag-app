@@ -49,7 +49,7 @@ class TestLLMArchitecture(unittest.TestCase):
         manager = FallbackManager(
             primary_provider="gemini",
             gemini_model="gemini-2.0-flash",
-            groq_models=["qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+            groq_models=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
         )
 
         response = manager.invoke("test prompt")
@@ -74,7 +74,7 @@ class TestLLMArchitecture(unittest.TestCase):
         mock_secondary_client.invoke.return_value = MagicMock(content="Mock Secondary Response")
         
         def mock_init(model_name, **kwargs):
-            if model_name == "qwen/qwen3.6-27b":
+            if model_name == "llama-3.3-70b-versatile":
                 return mock_primary_client
             return mock_secondary_client
             
@@ -83,7 +83,7 @@ class TestLLMArchitecture(unittest.TestCase):
         manager = FallbackManager(
             primary_provider="groq",
             gemini_model="gemini-2.0-flash",
-            groq_models=["qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+            groq_models=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
         )
 
         response = manager.invoke("test prompt")

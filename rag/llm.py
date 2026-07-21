@@ -527,8 +527,12 @@ class ClinicalRAGLLM:
         
         groq_models = [groq_primary, groq_secondary]
         
-        logger.info(f"Primary LLM model: {groq_primary}")
-        logger.info(f"Fallback LLM model: {groq_secondary}")
+        logger.info("Initialized Gemini:")
+        logger.info(f"{gemini_model}")
+        logger.info("Initialized Groq fallback:")
+        logger.info(f"{groq_primary}")
+        logger.info("Secondary fallback:")
+        logger.info(f"{groq_secondary}")
         
         self.manager = FallbackManager(
             primary_provider=primary_provider,

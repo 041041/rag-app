@@ -147,21 +147,16 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         return text
         
     import re
+    import os
     
     # If the text is the empty context fallback, return it as is
     if "Information not available" in text or "uploaded documents do not provide" in text:
         return text
         
-    # Check if headers are already present (case-insensitive)
-    has_def = re.search(r"\b(?:Short\s+)?definition\s*:", text, flags=re.IGNORECASE)
-    has_key = re.search(r"\bKey\s+points\s*:", text, flags=re.IGNORECASE)
-    has_src = re.search(r"\bSources\s*:", text, flags=re.IGNORECASE)
+    # Re-check and strip any existing Sources section first to rebuild it fresh
+    text = re.sub(r"\n*Sources\s*:.*", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
     
-    # If all three headers exist, return text as is
-    if has_def and has_key and has_src:
-        return text
-        
-    # Otherwise, perform a lightweight restructuring of the existing text
+    # Split text into lines to separate definition and bullets
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     
     definition_parts = []
@@ -180,8 +175,6 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
                     bullet_parts.append(content)
                 else:
                     bullet_parts.append(f"- {content}")
-            continue
-        if re.match(r"^Sources\s*:", line, re.IGNORECASE):
             continue
             
         if line.startswith("-") or line.startswith("•") or line.startswith("*"):
@@ -204,22 +197,26 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
     definition_text = " ".join(definition_parts)
     bullets_text = "\n".join(bullet_parts)
     
+    # Build unique sources list from the passed docs (which are already validated/filtered)
     unique_sources = []
     if docs:
         for doc in docs:
             src = doc.metadata.get("source")
             page = doc.metadata.get("page")
             if src:
-                import os
                 src_name = os.path.basename(src)
                 page_str = f" Page {page + 1}" if page is not None else ""
                 unique_sources.append(f"- {src_name}{page_str}")
+        # Sort to make it stable
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
-        citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)", text, flags=re.IGNORECASE)
+        # Fallback: extract citations from definition and bullets text directly
+        combined_text = definition_text + "\n" + bullets_text
+        citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)", combined_text, flags=re.IGNORECASE)
         for c_src, c_pg in citations:
-            unique_sources.append(f"- {c_src} Page {c_pg}")
+            c_src_name = os.path.basename(c_src.strip())
+            unique_sources.append(f"- {c_src_name} Page {c_pg}")
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
@@ -232,6 +229,11 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         f"Key points:\n{bullets_text}\n\n"
         f"Sources:\n{sources_text}"
     )
+    
+    # CDISC Terminology Correction
+    restructured = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", restructured, flags=re.IGNORECASE)
+    restructured = re.sub(r"\bADSL\s*\(\s*Analysis\s+Subject-Level\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", restructured, flags=re.IGNORECASE)
+    restructured = re.sub(r"\bAnalysis\s+Dataset\s*\(\s*ADSL\s*\)", "Subject-Level Analysis Dataset (ADSL)", restructured, flags=re.IGNORECASE)
     
     return restructured
 

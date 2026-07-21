@@ -393,17 +393,53 @@ def _call_chain_safe(qa_chain, query: str):
     res = _call_chain_safe_raw(qa_chain, query)
     if res and isinstance(res, dict):
         import re
+        import os
         
         raw_source_docs = list(res.get("source_documents", []))
-        
-        # 1. Clean thinking tags and introductory context phrases
         result_text = res.get("result", "")
+        citations = []
+        
         if isinstance(result_text, str):
             from rag.llm import clean_llm_response
             result_text = clean_llm_response(result_text)
             
+            # Extract citations from the cleaned response text first to filter source documents
+            citations = re.findall(
+                r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)",
+                result_text,
+                flags=re.IGNORECASE
+            )
+            
+            # Validate citations against raw_source_docs metadata
+            def match_doc(doc, filename, page_num):
+                doc_src = os.path.basename(doc.metadata.get("source", ""))
+                doc_pg = doc.metadata.get("page")
+                if doc_pg is None:
+                    return False
+                norm_doc = doc_src.lower().replace(".pdf", "").strip()
+                norm_file = filename.lower().replace(".pdf", "").strip()
+                return norm_doc == norm_file and (doc_pg + 1) == page_num
+                
+            displayed_docs = []
+            seen_docs = set()
+            for filename, page_num_str in citations:
+                try:
+                    page_num = int(page_num_str)
+                    for d in raw_source_docs:
+                        if match_doc(d, filename, page_num):
+                            doc_id = (d.metadata.get("source"), d.metadata.get("page"))
+                            if doc_id not in seen_docs:
+                                displayed_docs.append(d)
+                                seen_docs.add(doc_id)
+                except ValueError:
+                    pass
+            
+            # Update source_documents in res so they are filtered BEFORE ensure_clinical_rag_format is called
+            res["source_documents"] = displayed_docs
+            
+            # Reformat using the updated formatting validator
             from rag.llm import ensure_clinical_rag_format
-            result_text = ensure_clinical_rag_format(result_text, raw_source_docs)
+            result_text = ensure_clinical_rag_format(result_text, displayed_docs)
             
             # Remove common introductory patterns
             phrases = [
@@ -422,62 +458,32 @@ def _call_chain_safe(qa_chain, query: str):
                 
             res["result"] = result_text
 
-        after_validation_docs = list(res.get("source_documents", []))
-
-        # 2. Filter source_documents to only those actually cited in the result text
-        source_docs = res.get("source_documents", [])
-        if source_docs and isinstance(result_text, str):
-            citations = re.findall(
-                r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)",
-                result_text,
-                flags=re.IGNORECASE
-            )
-            if citations:
-                def normalize_source_name(name: str) -> str:
-                    name = re.sub(r"\.pdf$", "", name, flags=re.IGNORECASE)
-                    return "".join(c for c in name.lower() if c.isalnum())
-                
-                cited_pairs = set()
-                for c_src, c_pg in citations:
-                    try:
-                        cited_pairs.add((normalize_source_name(c_src), int(c_pg)))
-                    except ValueError:
-                        pass
-                
-                cited_docs = []
-                for d in source_docs:
-                    doc_src = d.metadata.get("source", "")
-                    doc_pg = d.metadata.get("page")
-                    if doc_pg is not None:
-                        doc_pg_1 = doc_pg + 1
-                        norm_doc_src = normalize_source_name(doc_src)
-                        if (norm_doc_src, doc_pg_1) in cited_pairs:
-                            cited_docs.append(d)
-                
-                # Only restrict if we actually matched some of them to avoid blanking
-                if cited_docs:
-                    res["source_documents"] = cited_docs
-                    
-        # 3. Log debug information (Task 5 logs)
-        retrieved_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in raw_source_docs]
-        validation_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in after_validation_docs]
-        displayed_list = [f"{d.metadata.get('source')} Page {d.metadata.get('page', 0) + 1}" for d in res.get("source_documents", [])]
+        # Build raw retrieved list:
+        raw_list = [f"{os.path.basename(d.metadata.get('source', ''))} Page {d.metadata.get('page', 0) + 1}" for d in raw_source_docs]
         
-        logger.info(f"--- CITATION SOURCE VALIDATION LOG ---")
-        logger.info(f"Question: '{query}'")
-        logger.info(f"Before validation:\n{type(res)}")
-        logger.info("Retrieved sources:")
-        for s in retrieved_list:
-            logger.info(f"  - {s}")
-        logger.info(f"After validation:\n{type(res)}")
-        logger.info("After validation:")
-        for s in validation_list:
-            logger.info(f"  - {s}")
-        logger.info("Displayed sources:")
-        for s in displayed_list:
-            logger.info(f"  - {s}")
-        logger.info(f"Final returned object:\n{res.keys()}")
-        logger.info(f"--------------------------------------")
+        # Build cited list:
+        cited_list = [f"{os.path.basename(src.strip())} Page {pg_str.strip()}" for src, pg_str in citations]
+        seen_cited = set()
+        unique_cited_list = []
+        for x in cited_list:
+            if x not in seen_cited:
+                unique_cited_list.append(x)
+                seen_cited.add(x)
+                
+        disp_list = [f"{os.path.basename(d.metadata.get('source', ''))} Page {d.metadata.get('page', 0) + 1}" for d in res.get("source_documents", [])]
+        
+        logger.info("RAW RETRIEVED SOURCES:")
+        for s in raw_list:
+            logger.info(s)
+            
+        logger.info("CITED SOURCES:")
+        for s in unique_cited_list:
+            logger.info(s)
+            
+        logger.info("DISPLAYED SOURCES:")
+        for s in disp_list:
+            logger.info(s)
+            
     return res
 
 def _call_chain_safe_raw(qa_chain, query: str):

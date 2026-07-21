@@ -349,7 +349,7 @@ class SimpleQAWrapper:
 # LLM prompt / QA builder
 # -------------------------
 PROMPT_TEMPLATE_STR = (
-    "You are an expert assistant for clinical trial data standards. Respond to the user's question using the following format:\n\n"
+    "You are an expert assistant for clinical trial data standards. Return only the final answer. Never include internal reasoning or analysis. Respond to the user's question using the following format:\n\n"
     "1. Short definition: A brief, 1-2 sentence definition. Include an inline citation at the end of the definition in the format (Source: <filename>, Page: <page_num>).\n"
     "2. Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs. Include inline citations at the end of bullet points in the format (Source: <filename>, Page: <page_num>).\n"
     "3. Sources: List of source document names and page references actually cited in the sections above.\n\n"

@@ -149,6 +149,99 @@ def clean_llm_response(text: str) -> str:
     
     return final_text
 
+def ensure_clinical_rag_format(text: str, docs: list) -> str:
+    if not isinstance(text, str) or not text.strip():
+        return text
+        
+    import re
+    
+    # If the text is the empty context fallback, return it as is
+    if "Information not available" in text or "uploaded documents do not provide" in text:
+        return text
+        
+    # Check if headers are already present (case-insensitive)
+    has_def = re.search(r"\b(?:Short\s+)?definition\s*:", text, flags=re.IGNORECASE)
+    has_key = re.search(r"\bKey\s+points\s*:", text, flags=re.IGNORECASE)
+    has_src = re.search(r"\bSources\s*:", text, flags=re.IGNORECASE)
+    
+    # If all three headers exist, return text as is
+    if has_def and has_key and has_src:
+        return text
+        
+    # Otherwise, perform a lightweight restructuring of the existing text
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    
+    definition_parts = []
+    bullet_parts = []
+    
+    for line in lines:
+        if re.match(r"^(?:Short\s+)?definition\s*:", line, re.IGNORECASE):
+            content = re.sub(r"^(?:Short\s+)?definition\s*:\s*", "", line, flags=re.IGNORECASE).strip()
+            if content:
+                definition_parts.append(content)
+            continue
+        if re.match(r"^Key\s+points\s*:", line, re.IGNORECASE):
+            content = re.sub(r"^Key\s+points\s*:\s*", "", line, flags=re.IGNORECASE).strip()
+            if content:
+                if content.startswith("-") or content.startswith("•"):
+                    bullet_parts.append(content)
+                else:
+                    bullet_parts.append(f"- {content}")
+            continue
+        if re.match(r"^Sources\s*:", line, re.IGNORECASE):
+            continue
+            
+        if line.startswith("-") or line.startswith("•") or line.startswith("*"):
+            cleaned_bullet = re.sub(r"^[-•*]\s*", "", line).strip()
+            bullet_parts.append(f"- {cleaned_bullet}")
+        else:
+            definition_parts.append(line)
+            
+    if not definition_parts and bullet_parts:
+        first = bullet_parts.pop(0)
+        definition_parts.append(re.sub(r"^[-•*]\s*", "", first).strip())
+    elif definition_parts and not bullet_parts:
+        if len(definition_parts) > 1:
+            for part in definition_parts[1:]:
+                bullet_parts.append(f"- {part}")
+            definition_parts = [definition_parts[0]]
+        else:
+            bullet_parts.append("- No additional key points retrieved.")
+            
+    definition_text = " ".join(definition_parts)
+    bullets_text = "\n".join(bullet_parts)
+    
+    unique_sources = []
+    if docs:
+        for doc in docs:
+            src = doc.metadata.get("source")
+            page = doc.metadata.get("page")
+            if src:
+                import os
+                src_name = os.path.basename(src)
+                page_str = f" Page {page + 1}" if page is not None else ""
+                unique_sources.append(f"- {src_name}{page_str}")
+        unique_sources = sorted(list(set(unique_sources)))
+        
+    if not unique_sources:
+        citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)", text, flags=re.IGNORECASE)
+        for c_src, c_pg in citations:
+            unique_sources.append(f"- {c_src} Page {c_pg}")
+        unique_sources = sorted(list(set(unique_sources)))
+        
+    if not unique_sources:
+        sources_text = "- Sources details not available."
+    else:
+        sources_text = "\n".join(unique_sources)
+        
+    restructured = (
+        f"Short definition:\n{definition_text}\n\n"
+        f"Key points:\n{bullets_text}\n\n"
+        f"Sources:\n{sources_text}"
+    )
+    
+    return restructured
+
 # Try to import providers safely
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI

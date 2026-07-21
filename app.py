@@ -402,6 +402,9 @@ def _call_chain_safe(qa_chain, query: str):
             from rag.llm import clean_llm_response
             result_text = clean_llm_response(result_text)
             
+            from rag.llm import ensure_clinical_rag_format
+            result_text = ensure_clinical_rag_format(result_text, raw_source_docs)
+            
             # Remove common introductory patterns
             phrases = [
                 r"^\s*based\s+on\s+the\s+provided\s+context,?\s*",

@@ -196,10 +196,19 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
             
     definition_text = " ".join(definition_parts)
     
-    # Terminology Correction on definition and bullets
+    # Remove unsupported statements on raw definition_text first
+    definition_text = re.sub(
+        r"The\s+BDS\s+contains\s+variables\s+that\s+are\s+not\s+specific\s+to\s+ADSL\s+or\s+BDS\s+structures\.?",
+        "BDS is a standard ADaM structure used for analysis datasets containing multiple records per subject.",
+        definition_text,
+        flags=re.IGNORECASE
+    )
+    
+    # Terminology Correction on definition
     definition_text = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
     definition_text = re.sub(r"\bADSL\s*\(\s*Analysis\s+Subject-Level\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
-    definition_text = re.sub(r"\bAnalysis\s+Dataset\s*\(\s*ADSL\s*\)", "Subject-Level Analysis Dataset (ADSL)", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\bSubject-Level\s+Analysis\s+Dataset\s*\(\s*ADSL\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\bAnalysis\s+Dataset\s*\(\s*ADSL\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
     
     # First occurrence normalization function
     def normalize_first_occurrence(t: str) -> str:
@@ -211,6 +220,12 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         
         sdtm_pat = r"\bSDTM\b(?!\s*\(\s*Study\s+Data\s+Tabulation\s+Model\s*\))"
         t = re.sub(sdtm_pat, "SDTM (Study Data Tabulation Model)", t, count=1, flags=re.IGNORECASE)
+        
+        bds_pat = r"\bBDS\b(?!\s*\(\s*Basic\s+Data\s+Structure\s*\))"
+        t = re.sub(bds_pat, "BDS (Basic Data Structure)", t, count=1, flags=re.IGNORECASE)
+        
+        occds_pat = r"\bOCCDS\b(?!\s*\(\s*Occurrence\s+Data\s+Structure\s*\))"
+        t = re.sub(occds_pat, "OCCDS (Occurrence Data Structure)", t, count=1, flags=re.IGNORECASE)
         
         return t
 
@@ -231,6 +246,7 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
             
     for bullet in bullet_parts:
         bullet = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
+        bullet = re.sub(r"\bSubject-Level\s+Analysis\s+Dataset\s*\(\s*ADSL\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
         bullet = re.sub(r"^[-•*]\s*", "", bullet).strip()
         
         if not re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", bullet, flags=re.IGNORECASE):
@@ -274,6 +290,58 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         f"{definition_text}\n\n"
         f"Key points:\n\n{bullets_text}\n\n"
         f"Sources:\n\n{sources_text}"
+    )
+    
+    # Remove unsupported statements
+    restructured = re.sub(
+        r"The\s+BDS\s*(?:\([^)]*\))?\s+contains\s+variables\s+that\s+are\s+not\s+specific\s+to\s+ADSL\s*(?:\([^)]*\))?\s+or\s+BDS\s*(?:\([^)]*\))?\s+structures\.?",
+        "BDS is a standard ADaM structure used for analysis datasets containing multiple records per subject.",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    
+    # Clean duplicate parenthetical expansions for ADaM
+    restructured = re.sub(
+        r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s*\(\s*(?:CDISC\s+)?Analysis\s+Data\s+Model\s*\)",
+        "ADaM (CDISC Analysis Data Model)",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    restructured = re.sub(
+        r"\bADaM\s*\(\s*Analysis\s+Data\s+Model\s*\)\s*\(\s*(?:CDISC\s+)?Analysis\s+Data\s+Model\s*\)",
+        "ADaM (CDISC Analysis Data Model)",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    
+    # Clean duplicate parenthetical expansions for ADSL
+    restructured = re.sub(
+        r"\bADSL\s*\(\s*Subject-Level\s+Analysis\s+Dataset\s*\)\s*\(\s*(?:Subject-Level\s+)?Analysis\s+Dataset\s*\)",
+        "ADSL (Subject-Level Analysis Dataset)",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    restructured = re.sub(
+        r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)\s*\(\s*(?:Subject-Level\s+)?Analysis\s+Dataset\s*\)",
+        "ADSL (Subject-Level Analysis Dataset)",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    
+    # Clean duplicate parenthetical expansions for BDS
+    restructured = re.sub(
+        r"\bBDS\s*\(\s*Basic\s+Data\s+Structure\s*\)\s*\(\s*Basic\s+Data\s+Structure\s*\)",
+        "BDS (Basic Data Structure)",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    
+    # Clean duplicate parenthetical expansions for OCCDS
+    restructured = re.sub(
+        r"\bOCCDS\s*\(\s*Occurrence\s+Data\s+Structure\s*\)\s*\(\s*Occurrence\s+Data\s+Structure\s*\)",
+        "OCCDS (Occurrence Data Structure)",
+        restructured,
+        flags=re.IGNORECASE
     )
     
     return restructured

@@ -156,46 +156,30 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
     # Re-check and strip any existing Sources section first to rebuild it fresh
     text = re.sub(r"\n*Sources\s*:.*", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
     
-    # Split text into lines to separate definition and bullets
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    # Separate definition and key points blocks by looking for "Key points:"
+    parts = re.split(r"\bKey\s+points\s*:", text, maxsplit=1, flags=re.IGNORECASE)
     
-    definition_parts = []
+    definition_text = parts[0].strip()
+    # Strip optional "Short definition:" header from definition_text
+    definition_text = re.sub(r"^(?:Short\s+)?definition\s*:\s*", "", definition_text, flags=re.IGNORECASE).strip()
+    
     bullet_parts = []
-    
-    for line in lines:
-        if re.match(r"^(?:Short\s+)?definition\s*:", line, re.IGNORECASE):
-            content = re.sub(r"^(?:Short\s+)?definition\s*:\s*", "", line, flags=re.IGNORECASE).strip()
-            if content:
-                definition_parts.append(content)
-            continue
-        if re.match(r"^Key\s+points\s*:", line, re.IGNORECASE):
-            content = re.sub(r"^Key\s+points\s*:\s*", "", line, flags=re.IGNORECASE).strip()
-            if content:
-                if content.startswith("-") or content.startswith("•") or content.startswith("*"):
-                    bullet_parts.append(content)
-                else:
-                    bullet_parts.append(f"- {content}")
-            continue
-            
-        if line.startswith("-") or line.startswith("•") or line.startswith("*"):
-            cleaned_bullet = re.sub(r"^[-•*]\s*", "", line).strip()
-            bullet_parts.append(f"- {cleaned_bullet}")
+    if len(parts) > 1:
+        kp_text = parts[1].strip()
+        raw_bullets = [line.strip() for line in kp_text.split("\n") if line.strip()]
+        for b in raw_bullets:
+            b_clean = re.sub(r"^[-•*]\s*", "", b).strip()
+            if b_clean:
+                bullet_parts.append(b_clean)
+                
+    if not bullet_parts:
+        def_lines = [line.strip() for line in definition_text.split("\n") if line.strip()]
+        if len(def_lines) > 1:
+            definition_text = def_lines[0]
+            bullet_parts = def_lines[1:]
         else:
-            definition_parts.append(line)
+            bullet_parts = ["No additional key points retrieved."]
             
-    if not definition_parts and bullet_parts:
-        first = bullet_parts.pop(0)
-        definition_parts.append(re.sub(r"^[-•*]\s*", "", first).strip())
-    elif definition_parts and not bullet_parts:
-        if len(definition_parts) > 1:
-            for part in definition_parts[1:]:
-                bullet_parts.append(f"- {part}")
-            definition_parts = [definition_parts[0]]
-        else:
-            bullet_parts.append("- No additional key points retrieved.")
-            
-    definition_text = " ".join(definition_parts)
-    
     # Remove unsupported statements on raw definition_text first
     definition_text = re.sub(
         r"The\s+BDS\s+contains\s+variables\s+that\s+are\s+not\s+specific\s+to\s+ADSL\s+or\s+BDS\s+structures\.?",
@@ -275,7 +259,7 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         
     if not unique_sources:
         combined_text = definition_text + "\n" + bullets_text
-        citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)", combined_text, flags=re.IGNORECASE)
+        citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*\d+\s*\)", combined_text, flags=re.IGNORECASE)
         for c_src, c_pg in citations:
             c_src_name = os.path.basename(c_src.strip())
             unique_sources.append(f"- {c_src_name}, Page: {c_pg}")
@@ -292,23 +276,27 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         f"Sources:\n\n{sources_text}"
     )
     
-    # Remove unsupported statements
+    # Clean duplicate parenthetical acronym expansion patterns
     restructured = re.sub(
-        r"The\s+BDS\s*(?:\([^)]*\))?\s+contains\s+variables\s+that\s+are\s+not\s+specific\s+to\s+ADSL\s*(?:\([^)]*\))?\s+or\s+BDS\s*(?:\([^)]*\))?\s+structures\.?",
-        "BDS is a standard ADaM structure used for analysis datasets containing multiple records per subject.",
+        r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s+stands\s+for\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+        "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
         restructured,
         flags=re.IGNORECASE
     )
-    
-    # Clean duplicate parenthetical expansions for ADaM
+    restructured = re.sub(
+        r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s+is\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+        "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
+        restructured,
+        flags=re.IGNORECASE
+    )
+    restructured = re.sub(
+        r"\bADaM\s+stands\s+for\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+        "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
+        restructured,
+        flags=re.IGNORECASE
+    )
     restructured = re.sub(
         r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s*\(\s*(?:CDISC\s+)?Analysis\s+Data\s+Model\s*\)",
-        "ADaM (CDISC Analysis Data Model)",
-        restructured,
-        flags=re.IGNORECASE
-    )
-    restructured = re.sub(
-        r"\bADaM\s*\(\s*Analysis\s+Data\s+Model\s*\)\s*\(\s*(?:CDISC\s+)?Analysis\s+Data\s+Model\s*\)",
         "ADaM (CDISC Analysis Data Model)",
         restructured,
         flags=re.IGNORECASE
@@ -317,12 +305,6 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
     # Clean duplicate parenthetical expansions for ADSL
     restructured = re.sub(
         r"\bADSL\s*\(\s*Subject-Level\s+Analysis\s+Dataset\s*\)\s*\(\s*(?:Subject-Level\s+)?Analysis\s+Dataset\s*\)",
-        "ADSL (Subject-Level Analysis Dataset)",
-        restructured,
-        flags=re.IGNORECASE
-    )
-    restructured = re.sub(
-        r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)\s*\(\s*(?:Subject-Level\s+)?Analysis\s+Dataset\s*\)",
         "ADSL (Subject-Level Analysis Dataset)",
         restructured,
         flags=re.IGNORECASE

@@ -453,6 +453,7 @@ class ClinicalRAGLLM:
         )
 
     def invoke(self, prompt: str) -> AIMessage:
+        logger.info("ACTIVE QA PROMPT VERSION: CLEAN_V2")
         response = self.manager.invoke(prompt)
         if response is not None and hasattr(response, "content") and response.content:
             response.content = clean_llm_response(response.content)

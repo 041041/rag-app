@@ -339,6 +339,7 @@ class SimpleQAWrapper:
                 "source_documents": [],
                 "raw": None
             }
+        logger.info("ACTIVE QA PROMPT VERSION: CLEAN_V2")
         logger.info("Invoking ClinicalRAGLLM unified abstraction...")
         response = self.llm.invoke(prompt_text)
         result_text = response.content if hasattr(response, "content") else str(response)
@@ -349,15 +350,23 @@ class SimpleQAWrapper:
 # LLM prompt / QA builder
 # -------------------------
 PROMPT_TEMPLATE_STR = (
-    "You are an expert assistant for clinical trial data standards. Return only the final answer. Never include internal reasoning or analysis. Respond to the user's question using the following format:\n\n"
-    "Start directly with a brief, 1-2 sentence definition of the concept. Include an inline citation at the end of the definition in the format (Source: <filename>, Page: <page_num>).\n\n"
-    "Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs. Include inline citations at the end of bullet points in the format (Source: <filename>, Page: <page_num>).\n\n"
-    "Formatting rules:\n"
-    "- Start the response directly with the definition text. Do not prepend with any header, label, or introductory phrase (such as 'Short definition:' or 'Based on the provided context').\n"
-    "- Do not include a 'Sources:' or bibliography section at the end of the response.\n"
-    "- Each bullet point must be on its own line. Do not combine bullets into paragraphs.\n"
-    "- Use only real metadata from the context documents below. Never invent page numbers.\n"
-    "- Never mention the phrase 'provided context' or 'provided text' in your answer.\n\n"
+    "You are a clinical data standards assistant.\n\n"
+    "Answer using ONLY retrieved documents.\n\n"
+    "Return only the final user-facing answer.\n\n"
+    "Never output:\n"
+    "- reasoning\n"
+    "- analysis\n"
+    "- planning\n"
+    "- draft steps\n"
+    "- verification steps\n\n"
+    "Required format:\n\n"
+    "Definition:\n"
+    "1-2 sentences with citation.\n\n"
+    "Key points:\n"
+    "- bullet points with citations.\n\n"
+    "Do not include a Sources section because the UI displays sources separately.\n\n"
+    "If information is unavailable:\n"
+    "\"Information not available in retrieved documents.\"\n\n"
     "Question: {question}\nContext:\n{context}\n\nAnswer:"
 )
 prompt_template = PromptTemplate(input_variables=["question", "context"], template=PROMPT_TEMPLATE_STR)

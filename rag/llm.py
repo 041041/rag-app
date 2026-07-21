@@ -567,6 +567,15 @@ class FallbackManager:
                     if provider_name == "groq":
                         logger.info("👉 Groq fallback returned response successfully.")
                     logger.info(f"✅ Completed | Latency: {latency:.2f} sec")
+                    
+                    # Attach provider and model info as attributes/metadata safely
+                    if hasattr(response, "__dict__"):
+                        response.llm_provider = "Gemini" if provider_name == "gemini" else "Groq"
+                        response.llm_model = model_name
+                    if hasattr(response, "response_metadata") and isinstance(response.response_metadata, dict):
+                        response.response_metadata["llm_provider"] = "Gemini" if provider_name == "gemini" else "Groq"
+                        response.response_metadata["llm_model"] = model_name
+                        
                     return response
                 except Exception as e:
                     if provider_name == "groq":
@@ -636,9 +645,20 @@ class ClinicalRAGLLM:
     def invoke(self, prompt: str) -> AIMessage:
         logger.info("ACTIVE QA PROMPT VERSION: CLEAN_V2")
         response = self.manager.invoke(prompt)
-        if response is not None and hasattr(response, "content") and response.content:
-            response.content = clean_llm_response(response.content)
+        if response is not None:
+            # Propagate attributes
+            llm_provider = getattr(response, "llm_provider", "Gemini")
+            llm_model = getattr(response, "llm_model", "gemini-2.0-flash")
             
+            if hasattr(response, "content") and response.content:
+                response.content = clean_llm_response(response.content)
+                
+            response.llm_provider = llm_provider
+            response.llm_model = llm_model
+            if hasattr(response, "response_metadata") and isinstance(response.response_metadata, dict):
+                response.response_metadata["llm_provider"] = llm_provider
+                response.response_metadata["llm_model"] = llm_model
+                
         cleaned_text = response.content if response is not None else ""
         logger.info(f"Final cleaned response length: {len(cleaned_text)}")
         logger.info(f"Final response preview: {cleaned_text[:200]}...")

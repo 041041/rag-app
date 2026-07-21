@@ -337,13 +337,25 @@ class SimpleQAWrapper:
             return {
                 "result": "The uploaded documents do not provide sufficient information to answer this question.",
                 "source_documents": [],
-                "raw": None
+                "raw": None,
+                "llm_provider": "Gemini",
+                "llm_model": "gemini-2.0-flash"
             }
         logger.info("ACTIVE QA PROMPT VERSION: CLEAN_V2")
         logger.info("Invoking ClinicalRAGLLM unified abstraction...")
         response = self.llm.invoke(prompt_text)
         result_text = response.content if hasattr(response, "content") else str(response)
-        return {"result": result_text, "source_documents": docs, "raw": response}
+        
+        llm_provider = getattr(response, "llm_provider", "Gemini")
+        llm_model = getattr(response, "llm_model", "gemini-2.0-flash")
+        
+        return {
+            "result": result_text,
+            "source_documents": docs,
+            "raw": response,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model
+        }
 
 
 # -------------------------
@@ -2110,6 +2122,20 @@ q_text = q
 
 # Clean expandable Example Questions panel (Requirement 2)
 with st.expander("💡 Example Questions", expanded=False):
+    st.markdown("""
+    <style>
+    div[data-testid="stExpander"] div[data-testid="stButton"] {
+        margin-bottom: 2px !important;
+        margin-top: 2px !important;
+    }
+    div[data-testid="stExpander"] button {
+        padding: 2px 8px !important;
+        line-height: 1.2 !important;
+        min-height: 24px !important;
+        height: auto !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     if st.button("• What is ADaM?", key="ex_adam", use_container_width=False):
         st.session_state.query_input = "What is ADaM?"
         st.session_state.search_executed = False
@@ -2269,7 +2295,15 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
 
     # ── 1. AI Answer ──────────────────────────────────────────────────────
     with st.container(border=True):
-        st.subheader("✨ AI Answer")
+        provider = result.get("llm_provider", "Gemini")
+        model = result.get("llm_model", "gemini-2.0-flash")
+        st.markdown(
+            f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>"
+            f"<h3 style='margin: 0; padding: 0; font-size: 1.35em; color: #f1f5f9;'>✨ AI Answer</h3>"
+            f"<span style='font-size: 0.85em; color: #94a3b8; font-weight: 500;'>🤖 {provider} - {model}</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
         from rag.llm import clean_llm_response, ensure_clinical_rag_format
         raw_ans = result.get("result", "").strip() if result.get("result") else ""
         cleaned_ans = clean_llm_response(raw_ans)

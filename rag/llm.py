@@ -268,21 +268,33 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
     if not unique_sources:
         sources_text = "Sources details not available."
     else:
-        sources_text = "\n".join(unique_sources)
+        # Strip any existing bullet indicators and format each as a markdown bullet
+        cleaned_srcs = []
+        for s in unique_sources:
+            s_clean = re.sub(r"^[-•*]\s*", "", s).strip()
+            if s_clean:
+                cleaned_srcs.append(f"- {s_clean}")
+        sources_text = "\n".join(cleaned_srcs)
         
     # --- STRIP INLINE CITATIONS FROM VISIBLE ANSWER ---
     definition_text = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", definition_text, flags=re.IGNORECASE)
     definition_text = re.sub(r"\s+\.", ".", definition_text)
     definition_text = re.sub(r"\s+", " ", definition_text).strip()
     
     clean_bullets = []
     for bullet in updated_bullets:
         bullet_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", bullet, flags=re.IGNORECASE).strip()
+        bullet_clean = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", bullet_clean, flags=re.IGNORECASE).strip()
         bullet_clean = re.sub(r"\s+\.", ".", bullet_clean)
         bullet_clean = re.sub(r"\s+", " ", bullet_clean).strip()
         if bullet_clean:
+            # Re-ensure bullet starts with "- "
+            if not bullet_clean.startswith("- "):
+                bullet_clean = re.sub(r"^[-•*]\s*", "", bullet_clean).strip()
+                bullet_clean = f"- {bullet_clean}"
             clean_bullets.append(bullet_clean)
-    bullets_text = "\n\n".join(clean_bullets)
+    bullets_text = "\n".join(clean_bullets)
     # --------------------------------------------------
         
     restructured = (
@@ -341,6 +353,10 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         flags=re.IGNORECASE
     )
     
+    # Text Cleanup: replace ".." with "." in the final answer
+    while ".." in restructured:
+        restructured = restructured.replace("..", ".")
+        
     return restructured
 
 # Try to import providers safely

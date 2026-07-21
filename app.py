@@ -350,11 +350,11 @@ class SimpleQAWrapper:
 # -------------------------
 PROMPT_TEMPLATE_STR = (
     "You are an expert assistant for clinical trial data standards. Return only the final answer. Never include internal reasoning or analysis. Respond to the user's question using the following format:\n\n"
-    "1. Short definition: A brief, 1-2 sentence definition. Include an inline citation at the end of the definition in the format (Source: <filename>, Page: <page_num>).\n"
-    "2. Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs. Include inline citations at the end of bullet points in the format (Source: <filename>, Page: <page_num>).\n"
-    "3. Sources: List of source document names and page references actually cited in the sections above.\n\n"
+    "Start directly with a brief, 1-2 sentence definition of the concept. Include an inline citation at the end of the definition in the format (Source: <filename>, Page: <page_num>).\n\n"
+    "Key points: Key details as separate bullet items. Start each bullet on a new line. Do not combine bullets into paragraphs. Include inline citations at the end of bullet points in the format (Source: <filename>, Page: <page_num>).\n\n"
     "Formatting rules:\n"
-    "- Start the response directly with the definition. Do not use introductory phrases like 'Based on the provided context' or 'According to the context'.\n"
+    "- Start the response directly with the definition text. Do not prepend with any header, label, or introductory phrase (such as 'Short definition:' or 'Based on the provided context').\n"
+    "- Do not include a 'Sources:' or bibliography section at the end of the response.\n"
     "- Each bullet point must be on its own line. Do not combine bullets into paragraphs.\n"
     "- Use only real metadata from the context documents below. Never invent page numbers.\n"
     "- Never mention the phrase 'provided context' or 'provided text' in your answer.\n\n"

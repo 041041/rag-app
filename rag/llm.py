@@ -242,7 +242,7 @@ class GeminiProvider(LLMProvider):
             raise ValueError("GOOGLE_API_KEY environment variable is not set.")
         self.client = ChatGoogleGenerativeAI(
             model=self.model_name,
-            temperature=0.2,
+            temperature=0.0,
             convert_system_message_to_human=True,
             google_api_key=api_key,
             max_retries=0  # Prevents internal retries on 429
@@ -278,7 +278,7 @@ class GroqProvider(LLMProvider):
         model_name = self.model_names[self.current_model_idx]
         self.client = ChatGroq(
             model_name=model_name,
-            temperature=0.2,
+            temperature=0.0,
             groq_api_key=os.getenv("GROQ_API_KEY"),
             max_retries=0  # Prevents internal retries on Groq errors
         )
@@ -371,7 +371,8 @@ class FallbackManager:
                 self.providers[provider_name] = provider
 
             model_name = provider.get_model_name()
-            logger.info(f"🤖 Selected LLM Provider: {provider_name.capitalize()} | Model: {model_name}")
+            logger.info("Using LLM provider:")
+            logger.info(f"Model: {model_name}")
 
             if provider_name == "groq":
                 logger.info("👉 [FALLBACK BRANCH REACHED] Fallback to Groq triggered.")
@@ -435,16 +436,19 @@ class ClinicalRAGLLM:
         primary_provider = os.getenv("PRIMARY_PROVIDER", "gemini").lower()
         gemini_model = settings.LLM_MODEL
         
-        groq_primary = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"))
-        groq_secondary = os.getenv("GROQ_SECONDARY_MODEL", "openai/gpt-oss-20b")
+        groq_primary = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
+        groq_secondary = os.getenv("GROQ_SECONDARY_MODEL", "qwen/qwen3.6-27b")
         
         # Override deprecated model names defensively
         if "llama-3.3-70b" in groq_primary or "versatile" in groq_primary:
-            groq_primary = "qwen/qwen3.6-27b"
+            groq_primary = "openai/gpt-oss-20b"
         if "llama-3.3-70b" in groq_secondary or "versatile" in groq_secondary:
-            groq_secondary = "openai/gpt-oss-20b"
+            groq_secondary = "qwen/qwen3.6-27b"
             
         groq_models = [groq_primary, groq_secondary]
+        
+        logger.info(f"Primary LLM model: {groq_primary}")
+        logger.info(f"Fallback LLM model: {groq_secondary}")
         
         self.manager = FallbackManager(
             primary_provider=primary_provider,
@@ -457,4 +461,9 @@ class ClinicalRAGLLM:
         response = self.manager.invoke(prompt)
         if response is not None and hasattr(response, "content") and response.content:
             response.content = clean_llm_response(response.content)
+            
+        cleaned_text = response.content if response is not None else ""
+        logger.info(f"Final cleaned response length: {len(cleaned_text)}")
+        logger.info(f"Final response preview: {cleaned_text[:200]}...")
+        
         return response

@@ -41,77 +41,70 @@ except Exception as e:
     logger.warning(f"Failed to monkey-patch google.genai BaseApiClient: {e}")
 
 def clean_llm_response(text: str) -> str:
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not text.strip():
         return text
     
     import re
     
     raw_len = len(text)
     
-    # Check if there is a <think> tag
-    think_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL)
-    
+    # 1. First, check if there's a think tag
+    think_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
     if think_match:
-        think_content = think_match.group(1).strip()
-        # Find everything after </think>
-        parts = text.split("</think>")
-        after_think = parts[1].strip() if len(parts) > 1 else ""
-        
-        # 1. If content exists after </think>:
-        if after_think:
-            final_text = after_think
+        parts = re.split(r"</think>", text, flags=re.IGNORECASE)
+        text = parts[1].strip() if len(parts) > 1 else ""
+    
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE).strip()
+    
+    # 2. Check if any reasoning headers exist in the text (even without think tags)
+    reasoning_headers = [
+        r"Analyze\s+User\s+Input\s*:",
+        r"Extract\s+Information\s+from\s+Context\s*:",
+        r"Draft\s*-\s*Short\s+Definition\s*:",
+        r"Draft\s+Response\s*:",
+        r"Mental\s+Refinement\s*:",
+        r"Check\s+Constraints\s*:",
+        r"Final\s+Review\s*:",
+        r"Output\s+Generation\s*:"
+    ]
+    
+    has_reasoning = False
+    for pattern in reasoning_headers:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            has_reasoning = True
+            break
+            
+    if has_reasoning:
+        # Extract only the final user-facing answer.
+        output_gen_match = re.search(r"Output\s+Generation\s*:(.*)", text, flags=re.DOTALL | re.IGNORECASE)
+        if output_gen_match:
+            text = output_gen_match.group(1).strip()
         else:
-            # 2. Search inside think block for Draft - Short Definition, Draft, Answer:
-            start_markers = [
-                r"Draft\s*-\s*Short\s+Definition\s*:",
-                r"Draft\s*-\s*Key\s+Points\s*:",
-                r"Draft\s*:",
-                r"Answer\s*:",
-                r"Response\s*:"
-            ]
-            
-            earliest_idx = -1
-            matched_len = 0
-            for marker in start_markers:
-                m = re.search(marker, think_content, flags=re.IGNORECASE)
-                if m:
-                    idx = m.start()
-                    if earliest_idx == -1 or idx < earliest_idx:
-                        earliest_idx = idx
-                        matched_len = m.end() - m.start()
-            
-            if earliest_idx != -1:
-                extracted = think_content[earliest_idx + matched_len:].strip()
-                
-                # Stop extraction before the stop markers
-                stop_markers = [
-                    r"Final\s+Review",
-                    r"Self-Correction",
-                    r"Output\s+Generation",
-                    r"Everything\s+looks\s+solid",
-                    r"Output\s+matches\s+response",
-                    r"Check\s+formatting\s+rules"
-                ]
-                
-                earliest_stop_idx = -1
-                for stop_marker in stop_markers:
-                    sm = re.search(stop_marker, extracted, flags=re.IGNORECASE)
-                    if sm:
-                        s_idx = sm.start()
-                        if earliest_stop_idx == -1 or s_idx < earliest_stop_idx:
-                            earliest_stop_idx = s_idx
-                
-                if earliest_stop_idx != -1:
-                    final_text = extracted[:earliest_stop_idx].strip()
-                else:
-                    final_text = extracted
+            draft_resp_match = re.search(r"Draft\s+Response\s*:(.*)", text, flags=re.DOTALL | re.IGNORECASE)
+            if draft_resp_match:
+                text = draft_resp_match.group(1).strip()
             else:
-                final_text = think_content
-    else:
-        # Remove any stray tags
-        final_text = text.replace("<think>", "").replace("</think>", "").strip()
-        
-    # 3. Remove these sections (Run unconditionally for idempotency):
+                draft_def_match = re.search(r"(Draft\s*-\s*Short\s+Definition\s*:.*)", text, flags=re.DOTALL | re.IGNORECASE)
+                if draft_def_match:
+                    extracted = draft_def_match.group(1).strip()
+                    stop_markers = [
+                        r"Final\s+Review",
+                        r"Self-Correction",
+                        r"Output\s+Generation",
+                        r"Check\s+formatting\s+rules"
+                    ]
+                    earliest_stop = -1
+                    for sm in stop_markers:
+                        m = re.search(sm, extracted, flags=re.IGNORECASE)
+                        if m:
+                            if earliest_stop == -1 or m.start() < earliest_stop:
+                                earliest_stop = m.start()
+                    if earliest_stop != -1:
+                        text = extracted[:earliest_stop].strip()
+                    else:
+                        text = extracted
+
+    # Clean up standard headings that might remain
     sections_to_remove = [
         r"Here's\s+a\s+thinking\s+process",
         r"Analyze\s+User\s+Input",
@@ -127,9 +120,9 @@ def clean_llm_response(text: str) -> str:
         r"Reasoning:"
     ]
     for section in sections_to_remove:
-        final_text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
-        
-    # Also strip any remaining draft labels from the final text
+        text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", text, flags=re.IGNORECASE)
+
+    # Strip any remaining draft labels
     draft_labels = [
         r"Draft\s*-\s*Short\s+Definition\s*:",
         r"Draft\s*-\s*Key\s+Points\s*:",
@@ -138,16 +131,16 @@ def clean_llm_response(text: str) -> str:
         r"Response\s*:"
     ]
     for label in draft_labels:
-        final_text = re.sub(rf"(?:^|\n)#*\s*\**{label}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
-        
-    final_text = final_text.strip()
-    cleaned_len = len(final_text)
+        text = re.sub(rf"(?:^|\n)#*\s*\**{label}\**[^\n]*", "", text, flags=re.IGNORECASE)
+
+    text = text.strip()
+    cleaned_len = len(text)
     
     logger.info(f"Raw answer length: {raw_len}")
     logger.info(f"Clean answer length: {cleaned_len}")
-    logger.info(f"Clean answer preview: {final_text[:200]}...")
+    logger.info(f"Clean answer preview: {text[:200]}...")
     
-    return final_text
+    return text
 
 def ensure_clinical_rag_format(text: str, docs: list) -> str:
     if not isinstance(text, str) or not text.strip():
@@ -529,15 +522,9 @@ class ClinicalRAGLLM:
         primary_provider = os.getenv("PRIMARY_PROVIDER", "gemini").lower()
         gemini_model = settings.LLM_MODEL
         
-        groq_primary = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
-        groq_secondary = os.getenv("GROQ_SECONDARY_MODEL", "qwen/qwen3.6-27b")
+        groq_primary = os.getenv("GROQ_PRIMARY_MODEL", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
+        groq_secondary = os.getenv("GROQ_SECONDARY_MODEL", "llama-3.1-8b-instant")
         
-        # Override deprecated model names defensively
-        if "llama-3.3-70b" in groq_primary or "versatile" in groq_primary:
-            groq_primary = "openai/gpt-oss-20b"
-        if "llama-3.3-70b" in groq_secondary or "versatile" in groq_secondary:
-            groq_secondary = "qwen/qwen3.6-27b"
-            
         groq_models = [groq_primary, groq_secondary]
         
         logger.info(f"Primary LLM model: {groq_primary}")

@@ -469,6 +469,32 @@ def _call_chain_safe(qa_chain, query: str):
                 result_text = result_text[0].upper() + result_text[1:]
                 
             res["result"] = result_text
+            
+            # Clean answer without citations or Sources section for "answer" field
+            ans_parts = re.split(r"\bSources\s*:", result_text, maxsplit=1, flags=re.IGNORECASE)
+            clean_answer_body = ans_parts[0].strip()
+            res["answer"] = clean_answer_body
+            
+            # Form citations list of dicts with deduplication
+            citations_list = []
+            seen_c = set()
+            for filename, page_num_str in citations:
+                try:
+                    c_dict = {
+                        "source": os.path.basename(filename.strip()),
+                        "page": int(page_num_str.strip())
+                    }
+                    c_key = (c_dict["source"], c_dict["page"])
+                    if c_key not in seen_c:
+                        citations_list.append(c_dict)
+                        seen_c.add(c_key)
+                except ValueError:
+                    pass
+            res["citations"] = citations_list
+            
+            # Safe assignment of LLM metadata
+            res["llm_provider"] = res.get("llm_provider", "Gemini")
+            res["llm_model"] = res.get("llm_model", "gemini-2.0-flash")
 
         # Build raw retrieved list:
         raw_list = [f"{os.path.basename(d.metadata.get('source', ''))} Page {d.metadata.get('page', 0) + 1}" for d in raw_source_docs]
@@ -533,15 +559,39 @@ def _call_chain_safe_raw(qa_chain, query: str):
             if isinstance(raw, dict):
                 for k in ("result", "text", "content", "message", "output", "response"):
                     if k in raw and isinstance(raw[k], str):
-                        return {"result": raw[k], "source_documents": raw.get("source_documents", []) or raw.get("documents", []), "raw": raw}
+                        return {
+                            "result": raw[k],
+                            "source_documents": raw.get("source_documents", []) or raw.get("documents", []),
+                            "raw": raw,
+                            "llm_provider": raw.get("llm_provider", getattr(raw, "llm_provider", "Gemini")),
+                            "llm_model": raw.get("llm_model", getattr(raw, "llm_model", "gemini-2.0-flash"))
+                        }
                 if "candidates" in raw and isinstance(raw["candidates"], (list, tuple)) and raw["candidates"]:
                     c0 = raw["candidates"][0]
                     if isinstance(c0, str):
-                        return {"result": c0, "source_documents": raw.get("source_documents", []) or raw.get("documents", []), "raw": raw}
+                        return {
+                            "result": c0,
+                            "source_documents": raw.get("source_documents", []) or raw.get("documents", []),
+                            "raw": raw,
+                            "llm_provider": raw.get("llm_provider", getattr(raw, "llm_provider", "Gemini")),
+                            "llm_model": raw.get("llm_model", getattr(raw, "llm_model", "gemini-2.0-flash"))
+                        }
                     if isinstance(c0, dict) and "content" in c0 and isinstance(c0["content"], str):
-                        return {"result": c0["content"], "source_documents": raw.get("source_documents", []) or raw.get("documents", []), "raw": raw}
+                        return {
+                            "result": c0["content"],
+                            "source_documents": raw.get("source_documents", []) or raw.get("documents", []),
+                            "raw": raw,
+                            "llm_provider": raw.get("llm_provider", getattr(raw, "llm_provider", "Gemini")),
+                            "llm_model": raw.get("llm_model", getattr(raw, "llm_model", "gemini-2.0-flash"))
+                        }
             if isinstance(raw, str):
-                return {"result": raw, "source_documents": [], "raw": raw}
+                return {
+                    "result": raw,
+                    "source_documents": [],
+                    "raw": raw,
+                    "llm_provider": getattr(raw, "llm_provider", "Gemini"),
+                    "llm_model": getattr(raw, "llm_model", "gemini-2.0-flash")
+                }
             # langchain-style generations
             try:
                 if hasattr(raw, "generations"):

@@ -254,7 +254,7 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
             page = doc.metadata.get("page")
             if src:
                 src_name = os.path.basename(src)
-                unique_sources.append(f"- {src_name}, Page: {page + 1}")
+                unique_sources.append(f"{src_name}, Page: {page + 1}")
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
@@ -262,13 +262,28 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*\d+\s*\)", combined_text, flags=re.IGNORECASE)
         for c_src, c_pg in citations:
             c_src_name = os.path.basename(c_src.strip())
-            unique_sources.append(f"- {c_src_name}, Page: {c_pg}")
+            unique_sources.append(f"{c_src_name}, Page: {c_pg}")
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
-        sources_text = "- Sources details not available."
+        sources_text = "Sources details not available."
     else:
         sources_text = "\n".join(unique_sources)
+        
+    # --- STRIP INLINE CITATIONS FROM VISIBLE ANSWER ---
+    definition_text = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\s+\.", ".", definition_text)
+    definition_text = re.sub(r"\s+", " ", definition_text).strip()
+    
+    clean_bullets = []
+    for bullet in updated_bullets:
+        bullet_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", bullet, flags=re.IGNORECASE).strip()
+        bullet_clean = re.sub(r"\s+\.", ".", bullet_clean)
+        bullet_clean = re.sub(r"\s+", " ", bullet_clean).strip()
+        if bullet_clean:
+            clean_bullets.append(bullet_clean)
+    bullets_text = "\n\n".join(clean_bullets)
+    # --------------------------------------------------
         
     restructured = (
         f"{definition_text}\n\n"

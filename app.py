@@ -907,7 +907,7 @@ def confirm_delete_dialog(doc_id: str, filename: str):
             st.rerun()
 
 def toggle_select_all_callback(page_filenames, page_doc_ids):
-    val = st.session_state.hdr_select_all
+    val = st.session_state.get("hdr_select_all", False)
     if val:
         for f in page_filenames:
             st.session_state.selected_docs.add(f)

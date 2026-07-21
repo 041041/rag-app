@@ -171,7 +171,7 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         if re.match(r"^Key\s+points\s*:", line, re.IGNORECASE):
             content = re.sub(r"^Key\s+points\s*:\s*", "", line, flags=re.IGNORECASE).strip()
             if content:
-                if content.startswith("-") or content.startswith("•"):
+                if content.startswith("-") or content.startswith("•") or content.startswith("*"):
                     bullet_parts.append(content)
                 else:
                     bullet_parts.append(f"- {content}")
@@ -195,9 +195,58 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
             bullet_parts.append("- No additional key points retrieved.")
             
     definition_text = " ".join(definition_parts)
-    bullets_text = "\n".join(bullet_parts)
     
-    # Build unique sources list from the passed docs (which are already validated/filtered)
+    # Terminology Correction on definition and bullets
+    definition_text = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\bADSL\s*\(\s*Analysis\s+Subject-Level\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", definition_text, flags=re.IGNORECASE)
+    definition_text = re.sub(r"\bAnalysis\s+Dataset\s*\(\s*ADSL\s*\)", "Subject-Level Analysis Dataset (ADSL)", definition_text, flags=re.IGNORECASE)
+    
+    # First occurrence normalization function
+    def normalize_first_occurrence(t: str) -> str:
+        adam_pat = r"\bADaM\b(?!\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\))"
+        t = re.sub(adam_pat, "ADaM (CDISC Analysis Data Model)", t, count=1, flags=re.IGNORECASE)
+        
+        adsl_pat = r"\bADSL\b(?!\s*\(\s*Subject-Level\s+Analysis\s+Dataset\s*\))"
+        t = re.sub(adsl_pat, "ADSL (Subject-Level Analysis Dataset)", t, count=1, flags=re.IGNORECASE)
+        
+        sdtm_pat = r"\bSDTM\b(?!\s*\(\s*Study\s+Data\s+Tabulation\s+Model\s*\))"
+        t = re.sub(sdtm_pat, "SDTM (Study Data Tabulation Model)", t, count=1, flags=re.IGNORECASE)
+        
+        return t
+
+    # Normalize first occurrence of terminology
+    definition_text = normalize_first_occurrence(definition_text)
+    
+    # Ensure every bullet point ends with a citation and starts with "- "
+    updated_bullets = []
+    default_citation = ""
+    def_cit_match = re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", definition_text, flags=re.IGNORECASE)
+    if def_cit_match:
+        default_citation = def_cit_match.group(0)
+    elif docs:
+        src = docs[0].metadata.get("source")
+        page = docs[0].metadata.get("page")
+        if src:
+            default_citation = f"(Source: {os.path.basename(src)}, Page: {page + 1})"
+            
+    for bullet in bullet_parts:
+        bullet = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
+        bullet = re.sub(r"^[-•*]\s*", "", bullet).strip()
+        
+        if not re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", bullet, flags=re.IGNORECASE):
+            if default_citation:
+                bullet = f"{bullet} {default_citation}"
+                
+        # Ensure Page: X formatting
+        bullet = re.sub(r"\bPage:?\s*(\d+)", r"Page: \1", bullet, flags=re.IGNORECASE)
+        updated_bullets.append(f"- {bullet}")
+        
+    bullets_text = "\n\n".join(updated_bullets)
+    
+    # Ensure Page: X formatting in definition
+    definition_text = re.sub(r"\bPage:?\s*(\d+)", r"Page: \1", definition_text, flags=re.IGNORECASE)
+    
+    # Build unique sources list from the passed docs
     unique_sources = []
     if docs:
         for doc in docs:
@@ -205,18 +254,15 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
             page = doc.metadata.get("page")
             if src:
                 src_name = os.path.basename(src)
-                page_str = f" Page {page + 1}" if page is not None else ""
-                unique_sources.append(f"- {src_name}{page_str}")
-        # Sort to make it stable
+                unique_sources.append(f"- {src_name}, Page: {page + 1}")
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
-        # Fallback: extract citations from definition and bullets text directly
         combined_text = definition_text + "\n" + bullets_text
         citations = re.findall(r"\(\s*Source:\s*([^,)]+?),\s*Page:?\s*(\d+)\s*\)", combined_text, flags=re.IGNORECASE)
         for c_src, c_pg in citations:
             c_src_name = os.path.basename(c_src.strip())
-            unique_sources.append(f"- {c_src_name} Page {c_pg}")
+            unique_sources.append(f"- {c_src_name}, Page: {c_pg}")
         unique_sources = sorted(list(set(unique_sources)))
         
     if not unique_sources:
@@ -225,15 +271,10 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         sources_text = "\n".join(unique_sources)
         
     restructured = (
-        f"Short definition:\n{definition_text}\n\n"
-        f"Key points:\n{bullets_text}\n\n"
-        f"Sources:\n{sources_text}"
+        f"{definition_text}\n\n"
+        f"Key points:\n\n{bullets_text}\n\n"
+        f"Sources:\n\n{sources_text}"
     )
-    
-    # CDISC Terminology Correction
-    restructured = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", restructured, flags=re.IGNORECASE)
-    restructured = re.sub(r"\bADSL\s*\(\s*Analysis\s+Subject-Level\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", restructured, flags=re.IGNORECASE)
-    restructured = re.sub(r"\bAnalysis\s+Dataset\s*\(\s*ADSL\s*\)", "Subject-Level Analysis Dataset (ADSL)", restructured, flags=re.IGNORECASE)
     
     return restructured
 

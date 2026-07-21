@@ -2256,8 +2256,9 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
         
         # Add final UI debug logs
         logger.info("Before UI rendering:")
-        logger.info(f"Final answer length: {len(cleaned_ans)}")
-        logger.info(f"Final answer preview: {cleaned_ans[:200]}...")
+        logger.info(f"Raw answer length: {len(raw_ans)}")
+        logger.info(f"Clean answer length: {len(cleaned_ans)}")
+        logger.info(f"Clean answer preview: {cleaned_ans[:200]}...")
         
         st.markdown(cleaned_ans)
 

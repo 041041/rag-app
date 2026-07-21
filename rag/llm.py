@@ -61,10 +61,50 @@ def clean_llm_response(text: str) -> str:
         if after_think:
             final_text = after_think
         else:
-            # 2. Search inside think block for Draft, Final Answer, Answer, Response:
-            draft_match = re.search(r"(?:Draft|Final Answer|Answer|Response):\s*(.*)", think_content, flags=re.DOTALL | re.IGNORECASE)
-            if draft_match:
-                final_text = draft_match.group(1).strip()
+            # 2. Search inside think block for Draft - Short Definition, Draft, Answer:
+            start_markers = [
+                r"Draft\s*-\s*Short\s+Definition\s*:",
+                r"Draft\s*-\s*Key\s+Points\s*:",
+                r"Draft\s*:",
+                r"Answer\s*:",
+                r"Response\s*:"
+            ]
+            
+            earliest_idx = -1
+            matched_len = 0
+            for marker in start_markers:
+                m = re.search(marker, think_content, flags=re.IGNORECASE)
+                if m:
+                    idx = m.start()
+                    if earliest_idx == -1 or idx < earliest_idx:
+                        earliest_idx = idx
+                        matched_len = m.end() - m.start()
+            
+            if earliest_idx != -1:
+                extracted = think_content[earliest_idx + matched_len:].strip()
+                
+                # Stop extraction before the stop markers
+                stop_markers = [
+                    r"Final\s+Review",
+                    r"Self-Correction",
+                    r"Output\s+Generation",
+                    r"Everything\s+looks\s+solid",
+                    r"Output\s+matches\s+response",
+                    r"Check\s+formatting\s+rules"
+                ]
+                
+                earliest_stop_idx = -1
+                for stop_marker in stop_markers:
+                    sm = re.search(stop_marker, extracted, flags=re.IGNORECASE)
+                    if sm:
+                        s_idx = sm.start()
+                        if earliest_stop_idx == -1 or s_idx < earliest_stop_idx:
+                            earliest_stop_idx = s_idx
+                
+                if earliest_stop_idx != -1:
+                    final_text = extracted[:earliest_stop_idx].strip()
+                else:
+                    final_text = extracted
             else:
                 final_text = think_content
     else:
@@ -73,12 +113,13 @@ def clean_llm_response(text: str) -> str:
         
     # 3. Remove these sections (Run unconditionally for idempotency):
     sections_to_remove = [
+        r"Here's\s+a\s+thinking\s+process",
         r"Analyze\s+User\s+Input",
-        r"Identify\s+Critical\s+Issue",
-        r"Synthesize\s+Definition",
+        r"Context\s+analysis",
         r"Format\s+Requirements",
         r"Scan\s+Context",
-        r"Context\s+analysis",
+        r"Synthesize\s+Definition",
+        r"Identify\s+Critical\s+Issue",
         r"Final\s+Review",
         r"Self-Correction",
         r"Output\s+Generation",
@@ -88,12 +129,23 @@ def clean_llm_response(text: str) -> str:
     for section in sections_to_remove:
         final_text = re.sub(rf"(?:^|\n)#*\s*\**{section}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
         
+    # Also strip any remaining draft labels from the final text
+    draft_labels = [
+        r"Draft\s*-\s*Short\s+Definition\s*:",
+        r"Draft\s*-\s*Key\s+Points\s*:",
+        r"Draft\s*:",
+        r"Answer\s*:",
+        r"Response\s*:"
+    ]
+    for label in draft_labels:
+        final_text = re.sub(rf"(?:^|\n)#*\s*\**{label}\**[^\n]*", "", final_text, flags=re.IGNORECASE)
+        
     final_text = final_text.strip()
     cleaned_len = len(final_text)
     
-    logger.info(f"Before cleaning: {raw_len}")
-    logger.info(f"After cleaning: {cleaned_len}")
-    logger.info(f"Extracted answer preview: {final_text[:200]}...")
+    logger.info(f"Raw answer length: {raw_len}")
+    logger.info(f"Clean answer length: {cleaned_len}")
+    logger.info(f"Clean answer preview: {final_text[:200]}...")
     
     return final_text
 

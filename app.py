@@ -2006,82 +2006,36 @@ with st.sidebar.expander("📊 Knowledge Base Stats", expanded=False):
 # 3. Connection & Sync state (Requirement 6)
 st.sidebar.caption(f"✓ Synced ({last_sync_str})")
 
-# Render Instructions Panel in Left Sidebar (Sprint 1)
-try:
-    # Set up sidebar logging
-    logger.info("Rendering Instructions Panel in left sidebar")
-    
-    # Read the markdown content
-    instructions_path = Path(__file__).resolve().parent / "config" / "instructions.md"
-    if instructions_path.exists():
-        instructions_text = instructions_path.read_text()
-    else:
-        instructions_text = "### 📖 Query Instructions\n\nNo guidance text found."
-        
-    # Helper to convert basic markdown formatting to HTML for custom styling/scrolling
-    def convert_md_to_html(md_text: str) -> str:
-        import re
-        html_lines = []
-        in_list = False
-        for line in md_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Headings
-            if line.startswith("### "):
-                if in_list:
-                    html_lines.append("</ul>")
-                    in_list = False
-                html_lines.append(f"<h4 style='color: #f1f5f9; margin-top: 10px; margin-bottom: 5px; font-size: 1.05em;'>{line[4:]}</h4>")
-                continue
-            elif line.startswith("## "):
-                if in_list:
-                    html_lines.append("</ul>")
-                    in_list = False
-                html_lines.append(f"<h3 style='color: #f1f5f9; margin-top: 12px; margin-bottom: 6px; font-size: 1.15em;'>{line[3:]}</h3>")
-                continue
-                
-            # Bullet Lists
-            if line.startswith("- ") or line.startswith("* "):
-                if not in_list:
-                    html_lines.append("<ul style='padding-left: 20px; margin-top: 5px; margin-bottom: 5px;'>")
-                    in_list = True
-                content = line[2:]
-                # Inline parsing inside list item
-                content = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", content)
-                content = re.sub(r"\*(.*?)\*", r"<em>\1</em>", content)
-                html_lines.append(f"<li style='margin-bottom: 4px;'>{content}</li>")
-                continue
-            else:
-                if in_list:
-                    html_lines.append("</ul>")
-                    in_list = False
-                    
-            # Inline bold and italics replacements
-            line = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", line)
-            line = re.sub(r"\*(.*?)\*", r"<em>\1</em>", line)
-            
-            html_lines.append(f"<p style='margin-bottom: 8px;'>{line}</p>")
-            
-        if in_list:
-            html_lines.append("</ul>")
-        return "\n".join(html_lines)
-        
-    html_content = convert_md_to_html(instructions_text)
-    
-    # Render Collapsible/Expandable Instructions Expander (collapsible, support scrollable max-height)
-    with st.sidebar.expander("📖 Query Instructions", expanded=False):
-        st.markdown(
-            f"""
-            <div style='max-height: 220px; overflow-y: auto; padding-right: 8px; font-size: 0.85em; line-height: 1.4; color: #cbd5e1;'>
-                {html_content}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-except Exception as e:
-    logger.error(f"Error rendering instructions panel: {e}")
+# 6. Instructions (Optional) Input Panel (Sprint Requirement)
+st.sidebar.markdown("""
+<div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 15px; margin-bottom: 5px;'>
+    <p style='font-size: 0.85em; font-weight: 600; margin: 0; color: #f8fafc;'>✍️ Instructions (Optional)</p>
+    <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>Provide additional guidance or formatting constraints for the AI response.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Session state initialization for instructions
+if "user_instructions" not in st.session_state:
+    st.session_state.user_instructions = ""
+
+# Input box allowing up to 1000 characters (lightweight validation / constraint support)
+instructions_val = st.sidebar.text_area(
+    "Instructions (Optional) Text Box",
+    value=st.session_state.user_instructions,
+    placeholder="E.g., Give a detailed answer with examples, provide in bullet points, explain like interview answer, create a table, etc.",
+    max_chars=1000,
+    label_visibility="collapsed",
+    key="user_instructions_input_widget"
+)
+
+# Keep the session state in sync
+st.session_state.user_instructions = instructions_val
+
+# Clear button (only visible if there is input inside the instructions box)
+if st.session_state.user_instructions:
+    if st.sidebar.button("🧹 Clear Instructions", key="btn_clear_user_instructions", use_container_width=True):
+        st.session_state.user_instructions = ""
+        st.rerun()
 
 st.sidebar.markdown("---")
 
@@ -2132,36 +2086,7 @@ if st.sidebar.button("Rebuild Index from R2", key="btn_rebuild_index_sidebar", u
             finally:
                 r2_storage.release_lock(owner_id)
 
-# 6. Instructions (Optional) Input Panel (Sprint Requirement)
-st.sidebar.markdown("""
-<div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 15px; margin-bottom: 5px;'>
-    <p style='font-size: 0.85em; font-weight: 600; margin: 0; color: #f8fafc;'>✍️ Instructions (Optional)</p>
-    <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>Provide additional guidance or formatting constraints for the AI response.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Session state initialization for instructions
-if "user_instructions" not in st.session_state:
-    st.session_state.user_instructions = ""
-
-# Input box allowing up to 1000 characters (lightweight validation / constraint support)
-instructions_val = st.sidebar.text_area(
-    "Instructions (Optional) Text Box",
-    value=st.session_state.user_instructions,
-    placeholder="E.g., Give a detailed answer with examples, provide in bullet points, explain like interview answer, create a table, etc.",
-    max_chars=1000,
-    label_visibility="collapsed",
-    key="user_instructions_input_widget"
-)
-
-# Keep the session state in sync
-st.session_state.user_instructions = instructions_val
-
-# Clear button (only visible if there is input inside the instructions box)
-if st.session_state.user_instructions:
-    if st.sidebar.button("🧹 Clear Instructions", key="btn_clear_user_instructions", use_container_width=True):
-        st.session_state.user_instructions = ""
-        st.rerun()
+# Instructions (Optional) Input Panel has been moved to the top of the sidebar panel for better user accessibility
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]

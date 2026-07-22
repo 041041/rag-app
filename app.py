@@ -328,6 +328,13 @@ class SimpleQAWrapper:
             prompt_text = self.prompt.template.format(question=query, context=context)
         else:
             prompt_text = f"Question: {query}\nContext:\n{context}"
+            
+        # Append User Instructions (Optional) to prompt context if present
+        import streamlit as st
+        user_instructions = st.session_state.get("user_instructions", "").strip()
+        if user_instructions:
+            prompt_text += f"\n\nAdditional Guidance/Instructions:\n{user_instructions}"
+            
         return prompt_text, docs
 
     def run(self, query: str):
@@ -2124,6 +2131,37 @@ if st.sidebar.button("Rebuild Index from R2", key="btn_rebuild_index_sidebar", u
                     st.sidebar.error(f"❌ Rebuild failed: {', '.join(rebuild_res.get('errors', []))}")
             finally:
                 r2_storage.release_lock(owner_id)
+
+# 6. Instructions (Optional) Input Panel (Sprint Requirement)
+st.sidebar.markdown("""
+<div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 15px; margin-bottom: 5px;'>
+    <p style='font-size: 0.85em; font-weight: 600; margin: 0; color: #f8fafc;'>✍️ Instructions (Optional)</p>
+    <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>Provide additional guidance or formatting constraints for the AI response.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Session state initialization for instructions
+if "user_instructions" not in st.session_state:
+    st.session_state.user_instructions = ""
+
+# Input box allowing up to 1000 characters (lightweight validation / constraint support)
+instructions_val = st.sidebar.text_area(
+    "Instructions (Optional) Text Box",
+    value=st.session_state.user_instructions,
+    placeholder="E.g., Give a detailed answer with examples, provide in bullet points, explain like interview answer, create a table, etc.",
+    max_chars=1000,
+    label_visibility="collapsed",
+    key="user_instructions_input_widget"
+)
+
+# Keep the session state in sync
+st.session_state.user_instructions = instructions_val
+
+# Clear button (only visible if there is input inside the instructions box)
+if st.session_state.user_instructions:
+    if st.sidebar.button("🧹 Clear Instructions", key="btn_clear_user_instructions", use_container_width=True):
+        st.session_state.user_instructions = ""
+        st.rerun()
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]

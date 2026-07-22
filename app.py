@@ -2018,18 +2018,14 @@ st.sidebar.markdown("""
 if "user_instructions" not in st.session_state:
     st.session_state.user_instructions = ""
 
-# Input box allowing up to 1000 characters (lightweight validation / constraint support)
-instructions_val = st.sidebar.text_area(
+# Input box allowing up to 1000 characters (using direct key assignment to prevent Streamlit state feedback reset loop)
+st.sidebar.text_area(
     "Instructions (Optional) Text Box",
-    value=st.session_state.user_instructions,
     placeholder="E.g., Give a detailed answer with examples, provide in bullet points, explain like interview answer, create a table, etc.",
     max_chars=1000,
     label_visibility="collapsed",
-    key="user_instructions_input_widget"
+    key="user_instructions"
 )
-
-# Keep the session state in sync
-st.session_state.user_instructions = instructions_val
 
 # Clear button (only visible if there is input inside the instructions box)
 if st.session_state.user_instructions:

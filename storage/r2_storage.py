@@ -284,3 +284,19 @@ def delete_file(r2_key: str) -> bool:
         logger.error(f"Failed to delete {r2_key} from R2: {e}")
         return False
 
+def list_files(prefix: str) -> list:
+    """
+    List all file keys in the Cloudflare R2 bucket under a specific prefix.
+    """
+    try:
+        client = get_r2_client()
+        response = client.list_objects_v2(Bucket=settings.R2_BUCKET_NAME, Prefix=prefix)
+        keys = []
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                keys.append(obj['Key'])
+        return keys
+    except Exception as e:
+        logger.error(f"Failed to list files in R2 under prefix {prefix}: {e}")
+        return []
+

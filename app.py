@@ -94,7 +94,7 @@ from config import settings
 from storage import r2_storage
 from rag.faiss_store import FAISSVectorStore
 from rag.retrieval import VectorStoreRetrieverAdapter
-from rag.indexing import process_and_index_file, get_document_metadata, save_document_metadata
+from rag.indexing import process_and_index_file, get_document_metadata, save_document_metadata, rebuild_index_from_r2_docs
 
 try:
     from langchain_core.messages import HumanMessage
@@ -2020,10 +2020,36 @@ st.sidebar.markdown("""
     <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>View, search and organize uploaded documents.</p>
 </div>
 """, unsafe_allow_html=True)
-if st.sidebar.button("Open Document Manager", key="btn_open_portal_sidebar", use_container_width=True):
-    st.session_state.dialog_init_needed = True
-    st.session_state.show_doc_manager_dialog = True
-    st.rerun()
+col_open, col_rebuild = st.sidebar.columns(2)
+with col_open:
+    if st.button("Open Manager", key="btn_open_portal_sidebar", use_container_width=True):
+        st.session_state.dialog_init_needed = True
+        st.session_state.show_doc_manager_dialog = True
+        st.rerun()
+with col_rebuild:
+    if st.button("Rebuild Index", key="btn_rebuild_index_sidebar", use_container_width=True):
+        if not st.session_state.health_status.get("r2_connected", False):
+            st.sidebar.error("❌ R2 Offline: cannot rebuild index.")
+        else:
+            owner_id = f"rebuild_{int(time.time())}"
+            with st.sidebar.spinner("🔒 Locking R2..."):
+                lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+            if not lock_acquired:
+                st.sidebar.error("❌ Locking Conflict: another operation is active.")
+            else:
+                try:
+                    with st.sidebar.spinner("🔄 Rebuilding index..."):
+                        rebuild_res = rebuild_index_from_r2_docs(st.session_state.vector_store)
+                    if rebuild_res["status"] == "success":
+                        st.sidebar.success(f"✅ Rebuilt successfully! Processed {len(rebuild_res['processed_files'])} files.")
+                        st.session_state.health_status = initialize_rag()[1]
+                        st.rerun()
+                    elif rebuild_res["status"] == "empty":
+                        st.sidebar.warning("⚠️ No documents found on R2 to index.")
+                    else:
+                        st.sidebar.error(f"❌ Rebuild failed: {', '.join(rebuild_res.get('errors', []))}")
+                finally:
+                    r2_storage.release_lock(owner_id)
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]

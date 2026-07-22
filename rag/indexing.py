@@ -227,3 +227,133 @@ def process_and_index_file(
         results["message"] = f"Failed to process file: {str(e)}"
         
     return results
+
+def rebuild_index_from_r2_docs(vector_store) -> dict:
+    """
+    Downloads all documents from Cloudflare R2's documents/ prefix,
+    re-chunks, re-embeds them, and saves/uploads the index to R2.
+    """
+    import os
+    import time
+    from pathlib import Path
+    
+    results = {
+        "status": "success",
+        "processed_files": [],
+        "errors": []
+    }
+    
+    # 1. List files in R2 under documents/
+    prefix = settings.R2_DOCUMENTS_PREFIX
+    try:
+        keys = r2_storage.list_files(prefix)
+    except Exception as e:
+        logger.error(f"Failed to list R2 files during rebuild: {e}")
+        results["status"] = "error"
+        results["errors"].append(str(e))
+        return results
+        
+    if not keys:
+        logger.warning("No documents found in R2 bucket under documents/ prefix.")
+        results["status"] = "empty"
+        return results
+        
+    # Re-initialize a clean FAISSVectorStore
+    from rag.faiss_store import FAISSVectorStore
+    new_store = FAISSVectorStore()
+    
+    # Prepare new metadata database
+    new_metadata = {
+        "version": 1,
+        "last_updated": datetime.now().isoformat(),
+        "documents": {}
+    }
+    
+    # Loop over and ingest all files
+    for key in keys:
+        filename = key.replace(prefix, "", 1)
+        if not filename or filename == ".DS_Store":
+            continue
+            
+        logger.info(f"Rebuilding index for file: {filename}...")
+        local_path = settings.DATA_DIR / filename
+        
+        # Download file from R2
+        success = r2_storage.download_file(key, local_path)
+        if not success:
+            logger.error(f"Failed to download {filename} from R2 for rebuilding.")
+            results["errors"].append(f"Failed to download {filename}")
+            continue
+            
+        file_bytes = local_path.read_bytes()
+        file_hash = compute_file_hash(file_bytes)
+        
+        try:
+            # Extract text
+            Loader = _get_loader_for_path(local_path)
+            if not Loader:
+                raise ValueError(f"No supported loader found for file: {filename}")
+                
+            if Loader in (CSVLoader, TextLoader):
+                loader = Loader(str(local_path), encoding="utf-8")
+            else:
+                loader = Loader(str(local_path))
+                
+            extracted_docs = loader.load()
+            for d in extracted_docs:
+                d.metadata = getattr(d, "metadata", {}) or {}
+                d.metadata["source"] = filename
+                
+            # Chunk document
+            if RecursiveCharacterTextSplitter is None:
+                raise RuntimeError("LangChain RecursiveCharacterTextSplitter is not available.")
+                
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP,
+                separators=["\n\n", "\n", " ", ""]
+            )
+            chunks = splitter.split_documents(extracted_docs)
+            
+            # Embed and add to vector store
+            chunk_ids = new_store.add_documents(chunks)
+            
+            # Update metadata
+            import hashlib
+            doc_id = f"doc_{hashlib.md5(filename.encode('utf-8')).hexdigest()[:8]}"
+            new_metadata["documents"][doc_id] = {
+                "document_id": doc_id,
+                "filename": filename,
+                "hash": file_hash,
+                "timestamp": datetime.now().isoformat(),
+                "r2_path": key,
+                "chunk_count": len(chunks),
+                "chunk_ids": chunk_ids,
+                "file_size_kb": len(file_bytes) / 1024
+            }
+            results["processed_files"].append(filename)
+            
+        except Exception as e:
+            logger.error(f"Failed to index {filename} during rebuild: {e}", exc_info=True)
+            results["errors"].append(f"Failed to index {filename}: {str(e)}")
+            
+    # Save the new index locally and upload to R2
+    if results["processed_files"]:
+        new_store.save(str(settings.INDEXES_DIR))
+        
+        # Save metadata
+        settings.INDEXES_DIR.mkdir(parents=True, exist_ok=True)
+        metadata_path = settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(new_metadata, f, indent=4)
+            
+        # Upload new index files to R2
+        r2_storage.backup_indexes()
+        r2_storage.upload_file(settings.INDEXES_DIR / settings.FAISS_INDEX_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.FAISS_INDEX_FILE}")
+        r2_storage.upload_file(settings.INDEXES_DIR / settings.METADATA_PKL_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.METADATA_PKL_FILE}")
+        r2_storage.upload_file(settings.INDEXES_DIR / settings.DOCUMENT_METADATA_JSON_FILE, f"{settings.R2_INDEXES_PREFIX}{settings.DOCUMENT_METADATA_JSON_FILE}")
+        
+        # Load the new index into the referenced vector store
+        vector_store.load(str(settings.INDEXES_DIR))
+        
+    return results

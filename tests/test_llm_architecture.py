@@ -122,5 +122,51 @@ class TestLLMArchitecture(unittest.TestCase):
         self.assertIn("gemini_reachable", health_status)
         self.assertIn("groq_reachable", health_status)
 
+    @patch("rag.indexing.r2_storage.list_files")
+    @patch("rag.indexing.r2_storage.download_file")
+    @patch("rag.indexing.r2_storage.upload_file")
+    @patch("rag.indexing.r2_storage.backup_indexes")
+    @patch("rag.indexing._get_loader_for_path")
+    @patch("rag.indexing.compute_file_hash")
+    @patch("rag.faiss_store.get_embeddings_model")
+    def test_rebuild_index_from_r2_docs(self, mock_get_embeddings, mock_hash, mock_get_loader, mock_backup, mock_upload, mock_download, mock_list):
+        """Verify that index rebuilding flow correctly lists, downloads, and processes R2 files."""
+        mock_list.return_value = ["documents/ADaM_IG.pdf", "documents/sdtm_ig.pdf"]
+        mock_download.return_value = True
+        mock_upload.return_value = True
+        mock_backup.return_value = True
+        mock_hash.return_value = "mock_hash_val"
+        
+        # Mock embeddings model
+        mock_embed = MagicMock()
+        mock_embed.embed_documents.return_value = [[0.1] * 384]
+        mock_get_embeddings.return_value = mock_embed
+        
+        # Mock document loader
+        mock_loader_cls = MagicMock()
+        mock_loader = MagicMock()
+        mock_loader.load.return_value = [MagicMock(page_content="Mock page content", metadata={})]
+        mock_loader_cls.return_value = mock_loader
+        mock_get_loader.return_value = mock_loader_cls
+        
+        from rag.indexing import rebuild_index_from_r2_docs
+        mock_store = MagicMock()
+        mock_store.add_documents.return_value = [0, 1]
+        
+        # Patch local write_bytes
+        with patch("pathlib.Path.read_bytes", return_value=b"mock pdf bytes"), \
+             patch("pathlib.Path.write_bytes"), \
+             patch("pathlib.Path.mkdir"), \
+             patch("builtins.open", unittest.mock.mock_open()):
+             
+            res = rebuild_index_from_r2_docs(mock_store)
+            
+            self.assertEqual(res["status"], "success")
+            self.assertIn("ADaM_IG.pdf", res["processed_files"])
+            self.assertIn("sdtm_ig.pdf", res["processed_files"])
+            self.assertEqual(mock_list.call_count, 1)
+            self.assertEqual(mock_download.call_count, 2)
+            self.assertEqual(mock_store.load.call_count, 1)
+
 if __name__ == "__main__":
     unittest.main()

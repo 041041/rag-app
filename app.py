@@ -1999,6 +1999,83 @@ with st.sidebar.expander("📊 Knowledge Base Stats", expanded=False):
 # 3. Connection & Sync state (Requirement 6)
 st.sidebar.caption(f"✓ Synced ({last_sync_str})")
 
+# Render Instructions Panel in Left Sidebar (Sprint 1)
+try:
+    # Set up sidebar logging
+    logger.info("Rendering Instructions Panel in left sidebar")
+    
+    # Read the markdown content
+    instructions_path = Path(__file__).resolve().parent / "config" / "instructions.md"
+    if instructions_path.exists():
+        instructions_text = instructions_path.read_text()
+    else:
+        instructions_text = "### 📖 Query Instructions\n\nNo guidance text found."
+        
+    # Helper to convert basic markdown formatting to HTML for custom styling/scrolling
+    def convert_md_to_html(md_text: str) -> str:
+        import re
+        html_lines = []
+        in_list = False
+        for line in md_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Headings
+            if line.startswith("### "):
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                html_lines.append(f"<h4 style='color: #f1f5f9; margin-top: 10px; margin-bottom: 5px; font-size: 1.05em;'>{line[4:]}</h4>")
+                continue
+            elif line.startswith("## "):
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                html_lines.append(f"<h3 style='color: #f1f5f9; margin-top: 12px; margin-bottom: 6px; font-size: 1.15em;'>{line[3:]}</h3>")
+                continue
+                
+            # Bullet Lists
+            if line.startswith("- ") or line.startswith("* "):
+                if not in_list:
+                    html_lines.append("<ul style='padding-left: 20px; margin-top: 5px; margin-bottom: 5px;'>")
+                    in_list = True
+                content = line[2:]
+                # Inline parsing inside list item
+                content = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", content)
+                content = re.sub(r"\*(.*?)\*", r"<em>\1</em>", content)
+                html_lines.append(f"<li style='margin-bottom: 4px;'>{content}</li>")
+                continue
+            else:
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                    
+            # Inline bold and italics replacements
+            line = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", line)
+            line = re.sub(r"\*(.*?)\*", r"<em>\1</em>", line)
+            
+            html_lines.append(f"<p style='margin-bottom: 8px;'>{line}</p>")
+            
+        if in_list:
+            html_lines.append("</ul>")
+        return "\n".join(html_lines)
+        
+    html_content = convert_md_to_html(instructions_text)
+    
+    # Render Collapsible/Expandable Instructions Expander (collapsible, support scrollable max-height)
+    with st.sidebar.expander("📖 Query Instructions", expanded=False):
+        st.markdown(
+            f"""
+            <div style='max-height: 220px; overflow-y: auto; padding-right: 8px; font-size: 0.85em; line-height: 1.4; color: #cbd5e1;'>
+                {html_content}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+except Exception as e:
+    logger.error(f"Error rendering instructions panel: {e}")
+
 st.sidebar.markdown("---")
 
 # 4. Document Ingestion sidebar uploader

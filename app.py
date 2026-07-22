@@ -2020,36 +2020,33 @@ st.sidebar.markdown("""
     <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>View, search and organize uploaded documents.</p>
 </div>
 """, unsafe_allow_html=True)
-col_open, col_rebuild = st.sidebar.columns(2)
-with col_open:
-    if st.button("Open Manager", key="btn_open_portal_sidebar", use_container_width=True):
-        st.session_state.dialog_init_needed = True
-        st.session_state.show_doc_manager_dialog = True
-        st.rerun()
-with col_rebuild:
-    if st.button("Rebuild Index", key="btn_rebuild_index_sidebar", use_container_width=True):
-        if not st.session_state.health_status.get("r2_connected", False):
-            st.sidebar.error("❌ R2 Offline: cannot rebuild index.")
+if st.sidebar.button("Open Document Manager", key="btn_open_portal_sidebar", use_container_width=True):
+    st.session_state.dialog_init_needed = True
+    st.session_state.show_doc_manager_dialog = True
+    st.rerun()
+if st.sidebar.button("Rebuild Index from R2", key="btn_rebuild_index_sidebar", use_container_width=True):
+    if not st.session_state.health_status.get("r2_connected", False):
+        st.sidebar.error("❌ R2 Offline: cannot rebuild index.")
+    else:
+        owner_id = f"rebuild_{int(time.time())}"
+        with st.sidebar.spinner("🔒 Locking R2..."):
+            lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
+        if not lock_acquired:
+            st.sidebar.error("❌ Locking Conflict: another operation is active.")
         else:
-            owner_id = f"rebuild_{int(time.time())}"
-            with st.sidebar.spinner("🔒 Locking R2..."):
-                lock_acquired = r2_storage.acquire_lock(owner_id, timeout_seconds=45)
-            if not lock_acquired:
-                st.sidebar.error("❌ Locking Conflict: another operation is active.")
-            else:
-                try:
-                    with st.sidebar.spinner("🔄 Rebuilding index..."):
-                        rebuild_res = rebuild_index_from_r2_docs(st.session_state.vector_store)
-                    if rebuild_res["status"] == "success":
-                        st.sidebar.success(f"✅ Rebuilt successfully! Processed {len(rebuild_res['processed_files'])} files.")
-                        st.session_state.health_status = initialize_rag()[1]
-                        st.rerun()
-                    elif rebuild_res["status"] == "empty":
-                        st.sidebar.warning("⚠️ No documents found on R2 to index.")
-                    else:
-                        st.sidebar.error(f"❌ Rebuild failed: {', '.join(rebuild_res.get('errors', []))}")
-                finally:
-                    r2_storage.release_lock(owner_id)
+            try:
+                with st.sidebar.spinner("🔄 Rebuilding index..."):
+                    rebuild_res = rebuild_index_from_r2_docs(st.session_state.vector_store)
+                if rebuild_res["status"] == "success":
+                    st.sidebar.success(f"✅ Rebuilt successfully! Processed {len(rebuild_res['processed_files'])} files.")
+                    st.session_state.health_status = initialize_rag()[1]
+                    st.rerun()
+                elif rebuild_res["status"] == "empty":
+                    st.sidebar.warning("⚠️ No documents found on R2 to index.")
+                else:
+                    st.sidebar.error(f"❌ Rebuild failed: {', '.join(rebuild_res.get('errors', []))}")
+            finally:
+                r2_storage.release_lock(owner_id)
 
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]
@@ -2213,21 +2210,25 @@ with st.expander("💡 Example Questions", expanded=False):
     </style>
     """, unsafe_allow_html=True)
     if st.button("• What is ADaM?", key="ex_adam", use_container_width=False):
+        st.session_state.show_doc_manager_dialog = False
         st.session_state.query_input = "What is ADaM?"
         st.session_state.search_executed = False
         st.session_state.last_error = None
         st.rerun()
     if st.button("• Explain SDTM.", key="ex_sdtm", use_container_width=False):
+        st.session_state.show_doc_manager_dialog = False
         st.session_state.query_input = "Explain SDTM."
         st.session_state.search_executed = False
         st.session_state.last_error = None
         st.rerun()
     if st.button("• Show inclusion criteria.", key="ex_criteria", use_container_width=False):
+        st.session_state.show_doc_manager_dialog = False
         st.session_state.query_input = "Show inclusion criteria."
         st.session_state.search_executed = False
         st.session_state.last_error = None
         st.rerun()
     if st.button("• Summarize methodology.", key="ex_methodology", use_container_width=False):
+        st.session_state.show_doc_manager_dialog = False
         st.session_state.query_input = "Summarize methodology."
         st.session_state.search_executed = False
         st.session_state.last_error = None
@@ -2342,6 +2343,7 @@ if st.session_state.get("query_input"):
 # Primary action button rendering (Requirement 1 & 4)
 btn_label = "⏳ Generating Answer..." if st.session_state.searching else "✨ Ask AI"
 if st.button(btn_label, type="primary", use_container_width=False, disabled=st.session_state.searching, key="primary_ask_ai_btn"):
+    st.session_state.show_doc_manager_dialog = False
     if not q_text.strip():
         st.warning("⚠️ Please enter a question first.")
     elif not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GROQ_API_KEY"):

@@ -2298,6 +2298,7 @@ if st.sidebar.button("Rebuild Index from R2", key="btn_rebuild_index_sidebar", u
 if uploaded:
     new_files = [f for f in uploaded if f.name not in st.session_state.processed_files]
     if new_files:
+        indexed_in_this_run = []
         for f in new_files:
             # Generate unique owner session id for distributed optimistic lock
             owner_id = f"session_{int(time.time())}_{f.name.replace(' ', '_')}"
@@ -2336,12 +2337,9 @@ if uploaded:
                     res = process_and_index_file(f.name, f.getvalue(), st.session_state.vector_store)
                     
                 if res["status"] == "success":
-                    st.sidebar.success(f"✅ Successfully Indexed {f.name}")
-                    # Log execution times to screen
-                    timings = res.get("timings", {})
-                    with st.sidebar.expander(f"⏱️ Profiling Logs: {f.name}"):
-                        for step, duration in timings.items():
-                            st.write(f"**{step.replace('_', ' ').title()}**: `{duration:.2f}s`")
+                    indexed_in_this_run.append(f.name)
+                    # Log execution profiling metrics strictly to backend developer logs
+                    logger.info(f"Successfully Indexed: {f.name} | Profiling Timings: {res.get('timings', {})}")
                     # Update status
                     doc_meta = get_document_metadata()
                     st.session_state.health_status["version"] = doc_meta.get("version", 0)
@@ -2355,6 +2353,11 @@ if uploaded:
             finally:
                 # Release Distributed Lock
                 r2_storage.release_lock(owner_id)
+                
+        # Clean indexing message: Show only file name of the indexed document on a single line
+        if indexed_in_this_run:
+            lines = [f"Indexed: {name}" for name in indexed_in_this_run]
+            st.sidebar.markdown("\n\n".join(lines))
 
 # Startup check complete. Rendering centered search interface (Requirement 1 & 5)
 
@@ -2763,9 +2766,9 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
                     )
                         
         # ── 4. Summary Bar (no Chunks) ────────────────────────────────────
+        logger.info(f"RAG answer generated in {elapsed:.2f} seconds.")
         st.markdown(f"""
-        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 10px 20px; margin-top: 20px; font-size: 0.9em; opacity: 0.9; display: flex; gap: 32px; align-items: center;'>
-            <span>⏱️ <strong>{elapsed:.2f} sec</strong></span>
+        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px 20px; margin-top: 20px; font-size: 0.9em; opacity: 0.9; display: flex; gap: 32px; align-items: center;'>
             <span>📄 <strong>{num_sources} {source_label}</strong></span>
             <span>📚 <strong>{num_sources} {doc_label}</strong></span>
         </div>

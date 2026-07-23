@@ -2027,12 +2027,17 @@ def clear_user_instructions_callback():
 
 # 6. Instructions (Optional) Input Panel (Sprint Requirement)
 st.sidebar.write("")  # spacing
-col_label, col_btn = st.sidebar.columns([3, 1])
+col_label, col_btn = st.sidebar.columns([5, 2])
 with col_label:
     st.markdown("<p style='font-size: 0.9em; font-weight: 600; margin: 0; padding-top: 6px; color: #f8fafc;'>✍️ Instructions (Optional)</p>", unsafe_allow_html=True)
 with col_btn:
-    if st.session_state.get("user_instructions"):
-        st.button("Clear", key="btn_clear_user_instructions", on_click=clear_user_instructions_callback, use_container_width=True)
+    st.button(
+        "Clear", 
+        key="btn_clear_user_instructions", 
+        on_click=clear_user_instructions_callback, 
+        use_container_width=True,
+        disabled=not st.session_state.get("user_instructions")
+    )
 
 st.sidebar.caption("Provide additional guidance or formatting constraints for the AI response.")
 

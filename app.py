@@ -2163,8 +2163,10 @@ function setupSearchTextarea() {
     const textareas = window.parent.document.querySelectorAll('textarea');
     for (const t of textareas) {
         if (t.placeholder && t.placeholder.includes("Ask anything")) {
-            // Set focus
-            if (window.parent.document.activeElement !== t) {
+            // Set focus only if current focus is not on another editable input/textarea
+            const active = window.parent.document.activeElement;
+            const isEditing = active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
+            if (!isEditing && active !== t) {
                 t.focus();
                 t.setSelectionRange(t.value.length, t.value.length);
             }

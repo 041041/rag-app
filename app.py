@@ -2018,6 +2018,10 @@ st.sidebar.markdown("""
 if "user_instructions" not in st.session_state:
     st.session_state.user_instructions = ""
 
+# Callback function to safely clear instructions without throwing StreamlitAPIException
+def clear_user_instructions_callback():
+    st.session_state.user_instructions = ""
+
 # Input box allowing up to 1000 characters (using direct key assignment to prevent Streamlit state feedback reset loop)
 st.sidebar.text_area(
     "Instructions (Optional) Text Box",
@@ -2029,9 +2033,12 @@ st.sidebar.text_area(
 
 # Clear button (only visible if there is input inside the instructions box)
 if st.session_state.user_instructions:
-    if st.sidebar.button("🧹 Clear Instructions", key="btn_clear_user_instructions", use_container_width=True):
-        st.session_state.user_instructions = ""
-        st.rerun()
+    st.sidebar.button(
+        "🧹 Clear Instructions",
+        key="btn_clear_user_instructions",
+        on_click=clear_user_instructions_callback,
+        use_container_width=True
+    )
 
 st.sidebar.markdown("---")
 

@@ -148,6 +148,66 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         
     import re
     import os
+
+    def process_table_row_citations(row_text):
+        # Check if this is a header or separator row
+        if "---|---|---" in row_text or "Category | Description | Citation" in row_text:
+            return row_text
+            
+        parts = [p.strip() for p in row_text.split("|")]
+        if len(parts) < 5:
+            # Not a standard 3-column table row, return as is
+            return row_text
+            
+        # Extract citations from the entire row (both Description and Citation columns)
+        citation_pattern = r"(?:\(?\s*Source:\s*([^,)]+?),\s*Pages?:?\s*(\d+)\s*\)?)"
+        citations = re.findall(citation_pattern, row_text, flags=re.IGNORECASE)
+        
+        doc_pages = {}
+        for doc_name, page_str in citations:
+            doc_name_clean = os.path.basename(doc_name.strip())
+            if doc_name_clean not in doc_pages:
+                doc_pages[doc_name_clean] = set()
+            try:
+                doc_pages[doc_name_clean].add(int(page_str))
+            except ValueError:
+                pass
+                
+        # Scan Citation column (parts[3]) for filenames that don't have explicit pages
+        citation_cell = parts[3]
+        filename_pattern = r"([a-zA-Z0-9_\-\.]+\.(?:pdf|docx|txt|csv|md|html|xlsx))"
+        filename_matches = re.findall(filename_pattern, citation_cell, re.IGNORECASE)
+        for fname in filename_matches:
+            fname_clean = os.path.basename(fname.strip())
+            if fname_clean not in doc_pages:
+                doc_pages[fname_clean] = set()
+                
+        # Format the deduplicated citations
+        formatted_citations = []
+        for doc_name, pages_set in doc_pages.items():
+            sorted_pages = sorted(list(pages_set))
+            if not sorted_pages:
+                formatted_citations.append(doc_name)
+            elif len(sorted_pages) == 1:
+                formatted_citations.append(f"{doc_name}, Page: {sorted_pages[0]}")
+            else:
+                pages_str = ", ".join(str(p) for p in sorted_pages)
+                formatted_citations.append(f"{doc_name}, Pages: {pages_str}")
+        if formatted_citations:
+            parts[3] = "; ".join(formatted_citations)
+            
+        # Strip inline citations from the Description column (parts[2])
+        description_cell = parts[2]
+        description_cell = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", description_cell, flags=re.IGNORECASE).strip()
+        description_cell = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", description_cell, flags=re.IGNORECASE).strip()
+        description_cell = re.sub(r"\s+\.", ".", description_cell)
+        description_cell = re.sub(r"\s+", " ", description_cell).strip()
+        
+        # Update parts
+        parts[2] = description_cell
+        
+        # Reassemble table row
+        return "| " + " | ".join(parts[1:-1]) + " |"
     
     # If the text is the empty context fallback, return it as is
     if "Information not available" in text or "uploaded documents do not provide" in text:
@@ -232,24 +292,30 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         bullet = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
         bullet = re.sub(r"\bSubject-Level\s+Analysis\s+Dataset\s*\(\s*ADSL\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
         
-        # Check if the bullet is numbered (e.g. starts with a digit like "1. ")
+        # Check if the bullet is numbered or represents a markdown table row
         is_numbered = re.match(r"^\d+\.\s", bullet)
-        if not is_numbered:
+        is_table_row = bullet.startswith("|")
+        
+        if not is_numbered and not is_table_row:
             bullet = re.sub(r"^[-•*]\s*", "", bullet).strip()
         else:
             bullet = bullet.strip()
-        
-        if not re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", bullet, flags=re.IGNORECASE):
-            if default_citation:
-                bullet = f"{bullet} {default_citation}"
-                
-        # Ensure Page: X formatting
-        bullet = re.sub(r"\bPage:?\s*(\d+)", r"Page: \1", bullet, flags=re.IGNORECASE)
-        
-        if is_numbered:
+            
+        if is_table_row:
+            bullet = process_table_row_citations(bullet)
             updated_bullets.append(bullet)
         else:
-            updated_bullets.append(f"- {bullet}")
+            if not re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", bullet, flags=re.IGNORECASE):
+                if default_citation:
+                    bullet = f"{bullet} {default_citation}"
+                    
+            # Ensure Page: X formatting
+            bullet = re.sub(r"\bPage:?\s*(\d+)", r"Page: \1", bullet, flags=re.IGNORECASE)
+            
+            if is_numbered:
+                updated_bullets.append(bullet)
+            else:
+                updated_bullets.append(f"- {bullet}")
         
     bullets_text = "\n\n".join(updated_bullets)
     
@@ -286,24 +352,55 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
                 cleaned_srcs.append(f"- {s_clean}")
         sources_text = "\n".join(cleaned_srcs)
         
+    # Clean table rows inside definition_text first
+    def_lines = []
+    has_def_table = False
+    for line in definition_text.split("\n"):
+        line_strip = line.strip()
+        if line_strip.startswith("|"):
+            has_def_table = True
+            line_processed = process_table_row_citations(line_strip)
+            def_lines.append(line_processed)
+        else:
+            def_lines.append(line)
+    definition_text = "\n".join(def_lines)
+
     # --- STRIP INLINE CITATIONS FROM VISIBLE ANSWER ---
-    definition_text = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", definition_text, flags=re.IGNORECASE)
-    definition_text = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", definition_text, flags=re.IGNORECASE)
-    definition_text = re.sub(r"\s+\.", ".", definition_text)
-    definition_text = re.sub(r"\s+", " ", definition_text).strip()
-    
+    # If the block has a table, process inline citations but keep newlines intact
+    if has_def_table:
+        cleaned_lines = []
+        for line in definition_text.split("\n"):
+            if line.strip().startswith("|"):
+                cleaned_lines.append(line)
+            else:
+                line_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", line, flags=re.IGNORECASE)
+                line_clean = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", line_clean, flags=re.IGNORECASE)
+                line_clean = re.sub(r"\s+\.", ".", line_clean)
+                line_clean = re.sub(r"\s+", " ", line_clean).strip()
+                cleaned_lines.append(line_clean)
+        definition_text = "\n".join(cleaned_lines).strip()
+    else:
+        definition_text = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", definition_text, flags=re.IGNORECASE)
+        definition_text = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", definition_text, flags=re.IGNORECASE)
+        definition_text = re.sub(r"\s+\.", ".", definition_text)
+        definition_text = re.sub(r"\s+", " ", definition_text).strip()
+        
     clean_bullets = []
     for bullet in updated_bullets:
-        bullet_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", bullet, flags=re.IGNORECASE).strip()
-        bullet_clean = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", bullet_clean, flags=re.IGNORECASE).strip()
-        bullet_clean = re.sub(r"\s+\.", ".", bullet_clean)
-        bullet_clean = re.sub(r"\s+", " ", bullet_clean).strip()
-        if bullet_clean:
-            is_numbered = re.match(r"^\d+\.\s", bullet_clean)
-            if not bullet_clean.startswith("- ") and not is_numbered:
-                bullet_clean = re.sub(r"^[-•*]\s*", "", bullet_clean).strip()
-                bullet_clean = f"- {bullet_clean}"
-            clean_bullets.append(bullet_clean)
+        is_table_row = bullet.startswith("|")
+        if is_table_row:
+            clean_bullets.append(bullet)
+        else:
+            bullet_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", bullet, flags=re.IGNORECASE).strip()
+            bullet_clean = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", bullet_clean, flags=re.IGNORECASE).strip()
+            bullet_clean = re.sub(r"\s+\.", ".", bullet_clean)
+            bullet_clean = re.sub(r"\s+", " ", bullet_clean).strip()
+            if bullet_clean:
+                is_numbered = re.match(r"^\d+\.\s", bullet_clean)
+                if not bullet_clean.startswith("- ") and not is_numbered:
+                    bullet_clean = re.sub(r"^[-•*]\s*", "", bullet_clean).strip()
+                    bullet_clean = f"- {bullet_clean}"
+                clean_bullets.append(bullet_clean)
     bullets_text = "\n".join(clean_bullets)
     # --------------------------------------------------
         

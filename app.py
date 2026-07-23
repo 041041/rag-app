@@ -1773,6 +1773,40 @@ st.markdown("""
         font-weight: 800;
         letter-spacing: -0.5px;
     }
+    /* Table Styling for Premium Responsive Markdown Tables */
+    .stApp table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin: 15px 0 !important;
+        font-family: inherit !important;
+    }
+    .stApp th, .stApp td {
+        padding: 10px 12px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        font-size: 0.95em !important;
+        line-height: 1.5 !important;
+    }
+    .stApp th {
+        background-color: rgba(30, 41, 59, 0.6) !important;
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    }
+    .stApp td {
+        color: #e2e8f0 !important;
+    }
+    .stApp th:nth-child(1), .stApp td:nth-child(1) {
+        width: 18% !important;
+        font-weight: 600 !important;
+    }
+    .stApp th:nth-child(2), .stApp td:nth-child(2) {
+        width: 52% !important;
+    }
+    .stApp th:nth-child(3), .stApp td:nth-child(3) {
+        width: 30% !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
     .metric-card {
         background: rgba(30, 41, 59, 0.4);
         border: 1px solid rgba(255, 255, 255, 0.08);

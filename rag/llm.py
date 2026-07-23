@@ -215,7 +215,117 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         
     # Re-check and strip any existing Sources section first to rebuild it fresh
     text = re.sub(r"\n*Sources\s*:.*", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    # Detect if the RAG response contains a Markdown table
+    has_table = any(line.strip().startswith("|") for line in text.split("\n"))
     
+    if has_table:
+        # Build global unique sources with merged pages for the table view
+        doc_pages_global = {}
+        if docs:
+            for doc in docs:
+                src = doc.metadata.get("source")
+                page = doc.metadata.get("page")
+                if src:
+                    src_name = os.path.basename(src)
+                    if src_name not in doc_pages_global:
+                        doc_pages_global[src_name] = set()
+                    if page is not None:
+                        try:
+                            doc_pages_global[src_name].add(int(page) + 1)
+                        except (ValueError, TypeError):
+                            pass
+                            
+        # Scan inline citations inside table cells
+        citations = re.findall(r"(?:\(?\s*Source:\s*([^,)]+?),\s*Pages?:?\s*(\d+)\s*\)?)", text, flags=re.IGNORECASE)
+        for c_src, c_pg in citations:
+            c_src_name = os.path.basename(c_src.strip())
+            if c_src_name not in doc_pages_global:
+                doc_pages_global[c_src_name] = set()
+            try:
+                doc_pages_global[c_src_name].add(int(c_pg))
+            except (ValueError, TypeError):
+                pass
+                
+        # Format the global sources block at the bottom
+        cleaned_srcs = []
+        if doc_pages_global:
+            for doc_name in sorted(doc_pages_global.keys()):
+                pages_set = doc_pages_global[doc_name]
+                sorted_pages = sorted(list(pages_set))
+                if not sorted_pages:
+                    cleaned_srcs.append(f"- {doc_name}")
+                elif len(sorted_pages) == 1:
+                    cleaned_srcs.append(f"- {doc_name}, Page: {sorted_pages[0]}")
+                else:
+                    pages_str = ", ".join(str(p) for p in sorted_pages)
+                    cleaned_srcs.append(f"- {doc_name}, Pages: {pages_str}")
+            sources_text = "\n".join(cleaned_srcs)
+        else:
+            sources_text = "Sources details not available."
+            
+        # Process and clean each table row and text line individually
+        processed_lines = []
+        for line in text.split("\n"):
+            line_strip = line.strip()
+            if line_strip.startswith("|"):
+                processed_lines.append(process_table_row_citations(line_strip))
+            else:
+                line_clean = re.sub(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", "", line, flags=re.IGNORECASE)
+                line_clean = re.sub(r"\bSource:\s*[^,)]+?,\s*Page:?\s*\d+\b", "", line_clean, flags=re.IGNORECASE)
+                line_clean = re.sub(r"\s+\.", ".", line_clean)
+                line_clean = re.sub(r"\s+", " ", line_clean).strip()
+                if line_clean:
+                    processed_lines.append(line_clean)
+                    
+        cleaned_body = "\n".join(processed_lines)
+        restructured = f"{cleaned_body}\n\nSources:\n\n{sources_text}"
+        
+        # Clean duplicate acronyms on restructured text
+        restructured = re.sub(
+            r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s+stands\s+for\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+            "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s+is\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+            "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bADaM\s+stands\s+for\s+(?:the\s+)?(?:CDISC\s+)?Analysis\s+Data\s+Model",
+            "ADaM (CDISC Analysis Data Model) is a standard for clinical trial analysis datasets.",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bADaM\s*\(\s*CDISC\s+Analysis\s+Data\s+Model\s*\)\s*\(\s*(?:CDISC\s+)?Analysis\s+Data\s+Model\s*\)",
+            "ADaM (CDISC Analysis Data Model)",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bADSL\s*\(\s*Subject-Level\s+Analysis\s+Dataset\s*\)\s*\(\s*(?:Subject-Level\s+)?Analysis\s+Dataset\s*\)",
+            "ADSL (Subject-Level Analysis Dataset)",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bBDS\s*\(\s*Basic\s+Data\s+Structure\s*\)\s*\(\s*Basic\s+Data\s+Structure\s*\)",
+            "BDS (Basic Data Structure)",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        restructured = re.sub(
+            r"\bOCCDS\s*\(\s*Occurrence\s+Data\s+Structure\s*\)\s*\(\s*Occurrence\s+Data\s+Structure\s*\)",
+            "OCCDS (Occurrence Data Structure)",
+            restructured,
+            flags=re.IGNORECASE
+        )
+        return restructured
+
     # Separate definition and key points blocks by looking for "Key points:"
     parts = re.split(r"\bKey\s+points\s*:", text, maxsplit=1, flags=re.IGNORECASE)
     

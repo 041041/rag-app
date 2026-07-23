@@ -1031,7 +1031,23 @@ def document_management_dialog():
                 selected_names.append(doc.get("filename"))
                 
         # Center and shrink the confirmation panel as requested ("make this panel small")
-        st.markdown("<div style='max-width: 550px; margin: 0 auto; padding: 10px 0;'>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <style>
+            /* Constrain dialog content layout block width and center it */
+            div[data-testid="stDialog"] div[data-testid="stVerticalBlock"] {
+                max-width: 560px !important;
+                margin: 40px auto !important;
+                background-color: #0f172a !important;
+                padding: 24px !important;
+                border-radius: 12px !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3) !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         st.markdown("### 🗑️ Bulk Delete Confirmation")
         count = len(selected_ids)
         st.write(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
@@ -1057,7 +1073,6 @@ def document_management_dialog():
                 st.session_state.selected_detail_doc = None
                 st.session_state.show_bulk_delete_confirm = False
                 st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     # Header with subtitle only (auto-rendered dialog title has priority)
@@ -1187,9 +1202,11 @@ def document_management_dialog():
         with col_b1:
             if st.button("🗑 Delete Selected", type="primary",
                          key="bulk_delete_action_btn",
-                         use_container_width=True,
-                         disabled=not is_selected):
-                st.session_state.show_bulk_delete_confirm = True
+                         use_container_width=True):
+                if not is_selected:
+                    st.warning("⚠️ Please select at least one document first.")
+                else:
+                    st.session_state.show_bulk_delete_confirm = True
         with col_b2:
             selected_names_list = list(st.session_state.selected_docs)
             zip_buffer = io.BytesIO()

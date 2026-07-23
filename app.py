@@ -1030,33 +1030,114 @@ def document_management_dialog():
                 selected_ids.append(doc_id)
                 selected_names.append(doc.get("filename"))
                 
-        # Center and shrink the confirmation panel as requested ("make this panel small")
+        # Center and shrink the confirmation panel with advanced CSS controls
         st.markdown(
             """
             <style>
-            /* Constrain dialog content layout block width and center it */
+            /* Constrain top-level confirmation box width and center it */
             div[data-testid="stDialog"] div[data-testid="stVerticalBlock"] {
-                max-width: 560px !important;
-                margin: 40px auto !important;
+                max-width: 530px !important;
+                margin: 20px auto !important;
                 background-color: #0f172a !important;
                 padding: 24px !important;
                 border-radius: 12px !important;
                 border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3) !important;
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+            }
+            /* Reset nested vertical blocks inside dialog (like columns or expanders) to transparent/borderless */
+            div[data-testid="stDialog"] div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
+                background-color: transparent !important;
+                border: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+                max-width: 100% !important;
+            }
+            /* Delete Permanent button: Strong red accent style */
+            div[data-testid="stDialog"] button[data-basebuttonstyle="primary"] {
+                background-color: #e11d48 !important; /* Premium crimson red */
+                background-image: none !important;
+                color: #ffffff !important;
+                border: 1px solid #f43f5e !important;
+                border-radius: 6px !important;
+                font-weight: 600 !important;
+                height: 38px !important;
+                line-height: 38px !important;
+                font-size: 0.9em !important;
+                box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06) !important;
+            }
+            div[data-testid="stDialog"] button[data-basebuttonstyle="primary"]:hover {
+                background-color: #be123c !important; /* Darker red on hover */
+                border-color: #e11d48 !important;
+            }
+            
+            /* Cancel Deletion button: Neutral dark slate style */
+            div[data-testid="stDialog"] button[data-basebuttonstyle="secondary"] {
+                background-color: rgba(255, 255, 255, 0.06) !important;
+                background-image: none !important;
+                color: #e2e8f0 !important;
+                border: 1px solid rgba(255, 255, 255, 0.15) !important;
+                border-radius: 6px !important;
+                font-weight: 500 !important;
+                height: 38px !important;
+                line-height: 38px !important;
+                font-size: 0.9em !important;
+            }
+            div[data-testid="stDialog"] button[data-basebuttonstyle="secondary"]:hover {
+                background-color: rgba(255, 255, 255, 0.12) !important;
+                color: #ffffff !important;
+                border-color: rgba(255, 255, 255, 0.25) !important;
             }
             </style>
             """,
             unsafe_allow_html=True
         )
+        
         st.markdown("### 🗑️ Bulk Delete Confirmation")
         count = len(selected_ids)
-        st.write(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
-        st.warning("⚠️ This action cannot be undone and will remove all corresponding vector chunks.")
+        st.markdown(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
+        
+        # Premium Light Red Warning Box to emphasize caution
+        st.markdown(
+            """
+            <div style="
+                background-color: rgba(239, 68, 68, 0.08); 
+                border-left: 4px solid #f43f5e; 
+                padding: 12px 16px; 
+                border-radius: 6px; 
+                margin: 15px 0;
+            ">
+                <p style="margin: 0; color: #f8fafc; font-size: 0.88em; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.1em;">⚠️</span>
+                    <span>This action cannot be undone and will remove all corresponding vector chunks.</span>
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         
         with st.expander("Show files being deleted"):
-            for f in selected_names:
-                st.write(f"- {f}")
-                
+            # Scrollable files list container with bullet points
+            files_html = "".join([f"<li style='margin-bottom: 6px; font-size: 0.88em; color: #cbd5e1; list-style-type: disc;'>{f}</li>" for f in selected_names])
+            st.markdown(
+                f"""
+                <div style="
+                    max-height: 150px; 
+                    overflow-y: auto; 
+                    background-color: rgba(0, 0, 0, 0.25); 
+                    border-radius: 6px; 
+                    padding: 12px 12px 12px 24px; 
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                ">
+                    <ul style="margin: 0; padding: 0;">
+                        {files_html}
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
         col_c1, col_c2 = st.columns(2)
         with col_c1:
             if st.button("Cancel Deletion", key="cancel_bulk_delete_btn", use_container_width=True):

@@ -231,7 +231,13 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
     for bullet in bullet_parts:
         bullet = re.sub(r"\bADSL\s*\(\s*Analysis\s+Dataset\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
         bullet = re.sub(r"\bSubject-Level\s+Analysis\s+Dataset\s*\(\s*ADSL\s*\)", "ADSL (Subject-Level Analysis Dataset)", bullet, flags=re.IGNORECASE)
-        bullet = re.sub(r"^[-•*]\s*", "", bullet).strip()
+        
+        # Check if the bullet is numbered (e.g. starts with a digit like "1. ")
+        is_numbered = re.match(r"^\d+\.\s", bullet)
+        if not is_numbered:
+            bullet = re.sub(r"^[-•*]\s*", "", bullet).strip()
+        else:
+            bullet = bullet.strip()
         
         if not re.search(r"\(\s*Source:\s*[^,)]+?,\s*Page:?\s*\d+\s*\)", bullet, flags=re.IGNORECASE):
             if default_citation:
@@ -239,7 +245,11 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
                 
         # Ensure Page: X formatting
         bullet = re.sub(r"\bPage:?\s*(\d+)", r"Page: \1", bullet, flags=re.IGNORECASE)
-        updated_bullets.append(f"- {bullet}")
+        
+        if is_numbered:
+            updated_bullets.append(bullet)
+        else:
+            updated_bullets.append(f"- {bullet}")
         
     bullets_text = "\n\n".join(updated_bullets)
     
@@ -289,8 +299,8 @@ def ensure_clinical_rag_format(text: str, docs: list) -> str:
         bullet_clean = re.sub(r"\s+\.", ".", bullet_clean)
         bullet_clean = re.sub(r"\s+", " ", bullet_clean).strip()
         if bullet_clean:
-            # Re-ensure bullet starts with "- "
-            if not bullet_clean.startswith("- "):
+            is_numbered = re.match(r"^\d+\.\s", bullet_clean)
+            if not bullet_clean.startswith("- ") and not is_numbered:
                 bullet_clean = re.sub(r"^[-•*]\s*", "", bullet_clean).strip()
                 bullet_clean = f"- {bullet_clean}"
             clean_bullets.append(bullet_clean)

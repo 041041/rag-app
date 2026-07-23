@@ -2417,6 +2417,21 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
 
     # ── 1. AI Answer ──────────────────────────────────────────────────────
     with st.container(border=True):
+        import re
+        # Apply custom scrollbar styling to this container
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                max-height: 520px;
+                overflow-y: auto;
+                padding-right: 8px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        
         provider = result.get("llm_provider", "Gemini")
         model = result.get("llm_model", "gemini-2.0-flash")
         st.markdown(
@@ -2437,25 +2452,103 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
         logger.info(f"Clean answer length: {len(cleaned_ans)}")
         logger.info(f"Clean answer preview: {cleaned_ans[:200]}...")
         
-        st.markdown(cleaned_ans)
-
-        # ── 2. Sources ────────────────────────────────────────────────────
-        if sources_group:
-            st.markdown("---")
-            st.markdown("#### 📄 Sources")
-            for source_name, chunks_info in sources_group.items():
-                pages = [p for p, c in chunks_info if p is not None]
-                unique_pages = sorted(set(pages)) if pages else []
-
-                st.markdown(f"📄 **{source_name}**")
-                if unique_pages:
-                    pages_display = ", ".join(str(p + 1) for p in unique_pages)
-                    pg_label = "Page" if len(unique_pages) == 1 else "Pages"
-                    st.caption(f"{pg_label}: {pages_display}")
-
-        # ── 3. Summary Bar (no Chunks) ────────────────────────────────────
+        # Check if the answer represents a fallback (insufficient information)
+        is_fallback = (
+            "Information not available" in cleaned_ans or 
+            "do not provide sufficient information" in cleaned_ans or 
+            "not available in the retrieved" in cleaned_ans
+        )
+        
+        if is_fallback:
+            st.markdown(cleaned_ans)
+        else:
+            # Parse the formatted response into Definition, Key Points, and Sources sections
+            ans_parts = cleaned_ans.split("\n\nKey points:\n\n")
+            definition_text = ""
+            key_points_block = ""
+            sources_block = ""
+            
+            if len(ans_parts) > 1:
+                definition_text = ans_parts[0].strip()
+                kp_parts = ans_parts[1].split("\n\nSources:\n\n")
+                key_points_block = kp_parts[0].strip()
+                if len(kp_parts) > 1:
+                    sources_block = kp_parts[1].strip()
+            else:
+                # Try fallback splitting on Sources
+                sources_parts = cleaned_ans.split("\n\nSources:\n\n")
+                definition_text = sources_parts[0].strip()
+                if len(sources_parts) > 1:
+                    sources_block = sources_parts[1].strip()
+                    
+            # 1. Render Definition Section
+            st.markdown("<h4 style='color: #63b3ed; border-bottom: 1px solid rgba(99,179,237,0.15); padding-bottom: 6px; margin-top: 15px; margin-bottom: 10px; font-size: 1.1em;'>📖 Definition</h4>", unsafe_allow_html=True)
+            if definition_text:
+                st.markdown(definition_text)
+            else:
+                st.markdown("*No definition provided.*")
+                
+            # 2. Render Key Points Section
+            if key_points_block:
+                st.markdown("<h4 style='color: #63b3ed; border-bottom: 1px solid rgba(99,179,237,0.15); padding-bottom: 6px; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em;'>📌 Key Points</h4>", unsafe_allow_html=True)
+                bullets = [b.strip() for b in key_points_block.split("\n") if b.strip()]
+                for b in bullets:
+                    b_clean = re.sub(r"^[-•*]\s*", "", b).strip()
+                    if b_clean:
+                        st.markdown(
+                            f"""
+                            <div style='background-color: rgba(30, 41, 59, 0.4); border-left: 3px solid #63b3ed; border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; font-size: 0.95em;'>
+                                {b_clean}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+            
+            # 3. Render Sources Section
+            if sources_block:
+                st.markdown("<h4 style='color: #63b3ed; border-bottom: 1px solid rgba(99,179,237,0.15); padding-bottom: 6px; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em;'>📄 Sources</h4>", unsafe_allow_html=True)
+                source_lines = [s.strip() for s in sources_block.split("\n") if s.strip()]
+                for s in source_lines:
+                    s_clean = re.sub(r"^[-•*]\s*", "", s).strip()
+                    if s_clean:
+                        parts = s_clean.split(",", 1)
+                        doc_name = parts[0].strip()
+                        page_info = parts[1].strip() if len(parts) > 1 else ""
+                        page_display = f" ({page_info})" if page_info else ""
+                        st.markdown(
+                            f"""
+                            <div style='background-color: rgba(30, 41, 59, 0.25); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; font-size: 0.9em;'>
+                                <span style='font-size: 1.1em;'>📄</span>
+                                <div>
+                                    <strong style='color: #e2e8f0;'>{doc_name}</strong>
+                                    <span style='color: #94a3b8; font-size: 0.95em;'>{page_display}</span>
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+            elif sources_group:
+                st.markdown("<h4 style='color: #63b3ed; border-bottom: 1px solid rgba(99,179,237,0.15); padding-bottom: 6px; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em;'>📄 Sources</h4>", unsafe_allow_html=True)
+                for source_name, chunks_info in sources_group.items():
+                    pages = [p for p, c in chunks_info if p is not None]
+                    unique_pages = sorted(set(pages)) if pages else []
+                    pages_str = f" (Pages: {', '.join(str(p + 1) for p in unique_pages)})" if unique_pages else ""
+                    st.markdown(
+                        f"""
+                        <div style='background-color: rgba(30, 41, 59, 0.25); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; font-size: 0.9em;'>
+                            <span style='font-size: 1.1em;'>📄</span>
+                            <div>
+                                <strong style='color: #e2e8f0;'>{source_name}</strong>
+                                <span style='color: #94a3b8; font-size: 0.95em;'>{pages_str}</span>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                        
+        # ── 4. Summary Bar (no Chunks) ────────────────────────────────────
         st.markdown(f"""
-        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 10px 20px; margin-top: 15px; font-size: 0.9em; opacity: 0.9; display: flex; gap: 32px; align-items: center;'>
+        <div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 10px 20px; margin-top: 20px; font-size: 0.9em; opacity: 0.9; display: flex; gap: 32px; align-items: center;'>
             <span>⏱️ <strong>{elapsed:.2f} sec</strong></span>
             <span>📄 <strong>{num_sources} {source_label}</strong></span>
             <span>📚 <strong>{num_sources} {doc_label}</strong></span>

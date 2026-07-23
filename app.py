@@ -2027,7 +2027,20 @@ def clear_user_instructions_callback():
 
 # 6. Instructions (Optional) Input Panel (Sprint Requirement)
 st.sidebar.write("")  # spacing
-col_label, col_btn = st.sidebar.columns([5, 2])
+# Inject CSS to prevent the Clear button from wrapping inside sidebar columns
+st.sidebar.markdown(
+    """
+    <style>
+    div[data-testid="column"] button {
+        padding: 4px 10px !important;
+        min-width: unset !important;
+        width: 100% !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+col_label, col_btn = st.sidebar.columns([1.7, 1.0])
 with col_label:
     st.markdown("<p style='font-size: 0.9em; font-weight: 600; margin: 0; padding-top: 6px; color: #f8fafc;'>✍️ Instructions (Optional)</p>", unsafe_allow_html=True)
 with col_btn:

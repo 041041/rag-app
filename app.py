@@ -1640,6 +1640,16 @@ st.markdown("""
         color: #f8fafc !important;
         -webkit-text-fill-color: #f8fafc !important;
     }
+    /* Style placeholders to look faded and distinct from entered text */
+    textarea::placeholder, input::placeholder,
+    [data-testid="stTextArea"] textarea::placeholder,
+    [data-testid="stTextInput"] input::placeholder,
+    .stTextArea textarea::placeholder,
+    .stTextInput input::placeholder {
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+        opacity: 0.65 !important;
+    }
     h1 {
         background: linear-gradient(135deg, #a5f3fc 0%, #38bdf8 50%, #6366f1 100%);
         -webkit-background-clip: text;

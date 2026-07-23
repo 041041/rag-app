@@ -999,6 +999,14 @@ def toggle_select_all_callback(page_filenames, page_doc_ids):
         for d_id in page_doc_ids:
             st.session_state[f"chk_{d_id}"] = False
 
+def toggle_doc_selection_callback(doc_id, doc_name):
+    # Safely sync single checkbox selections back to selected_docs state
+    is_checked = st.session_state.get(f"chk_{doc_id}", False)
+    if is_checked:
+        st.session_state.selected_docs.add(doc_name)
+    else:
+        st.session_state.selected_docs.discard(doc_name)
+
 @st.dialog("🗄️ Document Management Portal", width="large")
 def document_management_dialog():
     """
@@ -1007,6 +1015,11 @@ def document_management_dialog():
     # Read metadata database
     metadata = get_document_metadata()
     indexed_docs = metadata.get("documents", {})
+    
+    # Sync loaded metadata states to session checkboxes to avoid checkbox uncheck resets
+    for d_id, doc in indexed_docs.items():
+        doc_name = doc.get("filename")
+        st.session_state[f"chk_{d_id}"] = (doc_name in st.session_state.selected_docs)
     
     # Inline Bulk Delete Confirmation (Requirement 8 - no nesting dialogs)
     if st.session_state.get("show_bulk_delete_confirm"):
@@ -1017,6 +1030,8 @@ def document_management_dialog():
                 selected_ids.append(doc_id)
                 selected_names.append(doc.get("filename"))
                 
+        # Center and shrink the confirmation panel as requested ("make this panel small")
+        st.markdown("<div style='max-width: 550px; margin: 0 auto; padding: 10px 0;'>", unsafe_allow_html=True)
         st.markdown("### 🗑️ Bulk Delete Confirmation")
         count = len(selected_ids)
         st.write(f"Are you sure you want to permanently delete **{count}** selected documents from the index and Cloudflare R2?")
@@ -1042,6 +1057,7 @@ def document_management_dialog():
                 st.session_state.selected_detail_doc = None
                 st.session_state.show_bulk_delete_confirm = False
                 st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     # Header with subtitle only (auto-rendered dialog title has priority)
@@ -1234,12 +1250,13 @@ def document_management_dialog():
                 
                 col_row_chk, col_row_name, col_row_status, col_row_size = st.columns([1, 6, 2.5, 2.5])
                 with col_row_chk:
-                    doc_checked = st.checkbox("", value=(doc_name in st.session_state.selected_docs), key=f"chk_{doc_id}", label_visibility="collapsed")
-                    if doc_checked != (doc_name in st.session_state.selected_docs):
-                        if doc_checked:
-                            st.session_state.selected_docs.add(doc_name)
-                        else:
-                            st.session_state.selected_docs.discard(doc_name)
+                    st.checkbox(
+                        "", 
+                        key=f"chk_{doc_id}", 
+                        label_visibility="collapsed", 
+                        on_change=toggle_doc_selection_callback, 
+                        args=(doc_id, doc_name)
+                    )
                 with col_row_name:
                     # Filename — only this cell is a button (opens details panel)
                     row_bg = "rgba(255,255,255,0.04)" if is_active else "transparent"

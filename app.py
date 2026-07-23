@@ -333,7 +333,18 @@ class SimpleQAWrapper:
         import streamlit as st
         user_instructions = st.session_state.get("user_instructions", "").strip()
         if user_instructions:
-            prompt_text += f"\n\nAdditional Guidance/Instructions:\n{user_instructions}"
+            # Check if user instructions contain formatting requests
+            has_formatting = any(
+                word in user_instructions.lower() 
+                for word in ["table", "step", "prose", "list", "bullet", "format as", "bold", "underline", "checklist"]
+            )
+            override_msg = ""
+            if has_formatting:
+                override_msg = (
+                    "\n\nCRITICAL DIRECTIVE: The user has requested a specific formatting layout (such as a Table, Steps, Prose, or custom List structure) in their instructions below. "
+                    "You MUST strictly follow the user's requested layout and override the default 'Definition/Key Points' formatting format if necessary."
+                )
+            prompt_text += f"{override_msg}\n\nAdditional Guidance/Instructions:\n{user_instructions}"
             
         return prompt_text, docs
 
@@ -2006,14 +2017,6 @@ with st.sidebar.expander("📊 Knowledge Base Stats", expanded=False):
 # 3. Connection & Sync state (Requirement 6)
 st.sidebar.caption(f"✓ Synced ({last_sync_str})")
 
-# 6. Instructions (Optional) Input Panel (Sprint Requirement)
-st.sidebar.markdown("""
-<div style='background-color: rgba(30, 41, 59, 0.35); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 15px; margin-bottom: 5px;'>
-    <p style='font-size: 0.85em; font-weight: 600; margin: 0; color: #f8fafc;'>✍️ Instructions (Optional)</p>
-    <p style='font-size: 0.75em; opacity: 0.8; margin: 2px 0 8px 0; line-height: 1.3;'>Provide additional guidance or formatting constraints for the AI response.</p>
-</div>
-""", unsafe_allow_html=True)
-
 # Session state initialization for instructions
 if "user_instructions" not in st.session_state:
     st.session_state.user_instructions = ""
@@ -2021,6 +2024,17 @@ if "user_instructions" not in st.session_state:
 # Callback function to safely clear instructions without throwing StreamlitAPIException
 def clear_user_instructions_callback():
     st.session_state.user_instructions = ""
+
+# 6. Instructions (Optional) Input Panel (Sprint Requirement)
+st.sidebar.write("")  # spacing
+col_label, col_btn = st.sidebar.columns([3, 1])
+with col_label:
+    st.markdown("<p style='font-size: 0.9em; font-weight: 600; margin: 0; padding-top: 6px; color: #f8fafc;'>✍️ Instructions (Optional)</p>", unsafe_allow_html=True)
+with col_btn:
+    if st.session_state.get("user_instructions"):
+        st.button("Clear", key="btn_clear_user_instructions", on_click=clear_user_instructions_callback, use_container_width=True)
+
+st.sidebar.caption("Provide additional guidance or formatting constraints for the AI response.")
 
 # Input box allowing up to 1000 characters (using direct key assignment to prevent Streamlit state feedback reset loop)
 st.sidebar.text_area(
@@ -2031,13 +2045,26 @@ st.sidebar.text_area(
     key="user_instructions"
 )
 
-# Clear button (only visible if there is input inside the instructions box)
-if st.session_state.user_instructions:
-    st.sidebar.button(
-        "🧹 Clear Instructions",
-        key="btn_clear_user_instructions",
-        on_click=clear_user_instructions_callback,
-        use_container_width=True
+# Expandable Capabilities & Limitations Tooltip
+with st.sidebar.expander("ⓘ Capabilities & Limitations"):
+    st.markdown(
+        """
+        <div style='font-size: 0.85em; line-height: 1.4; color: #cbd5e1;'>
+        <strong>🛠️ What you can do:</strong>
+        <ul style='margin-top: 3px; margin-bottom: 8px; padding-left: 18px;'>
+            <li><strong>Formatting:</strong> e.g., <em>"Format as a table"</em>, <em>"List as steps"</em>, <em>"Show bullets"</em>.</li>
+            <li><strong>Style/Tone:</strong> e.g., <em>"Explain in simple terms"</em>, <em>"Write a technical summary"</em>.</li>
+            <li><strong>Focus:</strong> e.g., <em>"Focus on safety metrics"</em>.</li>
+        </ul>
+        <strong>⚠️ Limitations:</strong>
+        <ul style='margin-top: 3px; margin-bottom: 0px; padding-left: 18px;'>
+            <li><strong>No Math:</strong> Cannot calculate totals or statistics.</li>
+            <li><strong>RAG Bound:</strong> Searches only uploaded documents.</li>
+            <li><strong>Plain Text:</strong> Up to 1,000 characters.</li>
+        </ul>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
 st.sidebar.markdown("---")
@@ -2459,7 +2486,19 @@ if st.session_state.search_executed and st.session_state.get("last_result"):
             "not available in the retrieved" in cleaned_ans
         )
         
+        # Check if user instructions contain formatting requests to bypass card structure
+        has_formatting_request = False
+        user_insts = st.session_state.get("user_instructions", "").strip().lower()
+        if user_insts:
+            has_formatting_request = any(
+                word in user_insts 
+                for word in ["table", "step", "prose", "list", "bullet", "format as", "bold", "underline", "checklist"]
+            )
+            
         if is_fallback:
+            st.markdown(cleaned_ans)
+        elif has_formatting_request:
+            # Bypass cards, render directly in Markdown to support custom formatting correctly
             st.markdown(cleaned_ans)
         else:
             # Parse the formatted response into Definition, Key Points, and Sources sections
